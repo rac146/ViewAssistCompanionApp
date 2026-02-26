@@ -238,8 +238,10 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 setScreenSaver(true)
                 screenWake()
             } else {
-                if (config.screenBrightness <= 0.3) config.screenBrightness = 0.6f
-                screen.setScreenBrightness(window, config.screenBrightness)
+                if (!config.screenAutoBrightness) {
+                    if (config.screenBrightness <= 0.3) config.screenBrightness = 0.6f
+                    screen.setScreenBrightness(window, config.screenBrightness)
+                }
 
                 config.screenTimeout = screen.getScreenTimeout()
                 if (config.screenTimeout < 15000) config.screenTimeout = 15000
@@ -247,7 +249,9 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 setScreenSaver(false)
             }
         } else if (viewModel.vacaState.value.satelliteRunning) {
-            screen.setScreenBrightness(window, config.screenBrightness)
+            if (!config.screenAutoBrightness) {
+                screen.setScreenBrightness(window, config.screenBrightness)
+            }
             screen.setScreenAutoBrightness(window, config.screenAutoBrightness)
             screen.setScreenTimeout(config.screenTimeout)
             screen.setScreenAlwaysOn(window, config.screenAlwaysOn)
@@ -545,7 +549,9 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                     }
                     "screenBrightness" -> {
                         if (screen.isScreenOn() and !viewModel.vacaState.value.screenBlank) {
-                            screen.setScreenBrightness(window, event.newValue as Float)
+                            if (!config.screenAutoBrightness) {
+                                screen.setScreenBrightness(window, event.newValue as Float)
+                            }
                         }
                     }
                     "screenTimeout" -> screen.setScreenTimeout(config.screenTimeout)
@@ -598,7 +604,9 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             viewModel.setScreenBlank(false)
             screen.setScreenAlwaysOn(window, config.screenAlwaysOn)
             screen.setScreenAutoBrightness(window, config.screenAutoBrightness)
-            screen.setScreenBrightness(window, config.screenBrightness)
+            if (!config.screenAutoBrightness) {
+                screen.setScreenBrightness(window, config.screenBrightness)
+            }
         }
     }
 
@@ -989,4 +997,3 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         super.onTrimMemory(level)
     }
 }
-
