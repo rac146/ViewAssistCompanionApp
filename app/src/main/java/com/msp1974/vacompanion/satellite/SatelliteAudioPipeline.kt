@@ -8,6 +8,7 @@ import com.msp1974.vacompanion.wyoming.WyomingPacket
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
@@ -64,6 +65,7 @@ abstract class SatelliteAudioPipeline(
 
     private var pipelineRunning = CompletableDeferred<PipelineEndReason>()
     private var audioMessageQueue = Channel<WyomingPacket>(capacity = 200)
+    private var stageTimeoutJob: Job? = null
     private var result: PipelineEndReason = PipelineEndReason.NONE
     var pipelineStage = PipelineStage.INIT
         set(value) {
@@ -71,9 +73,9 @@ abstract class SatelliteAudioPipeline(
             onStateChange(value)
         }
 
-    fun run() {
+    fun run(sendDetection: Boolean = false) {
         scope.launch {
-            start()
+            start(sendDetection)
         }
     }
 
@@ -88,6 +90,15 @@ abstract class SatelliteAudioPipeline(
                 }
                 Timber.d("Starting pipeline [$pipelineId]")
                 sendMessage(buildRunPipelineMessage())
+                // 0.10 compatibility: older integrations can miss/lag the initial `transcribe`
+                // event. If that happens, start local streaming so audio still reaches HA.
+                scope.launch {
+                    delay(1500)
+                    if (pipelineStage == PipelineStage.STARTED && !pipelineRunning.isCompleted) {
+                        Timber.w("No transcribe event received, enabling compatibility listening mode")
+                        handleTranscribe()
+                    }
+                }
                 mediaManager.voicePlayer.start(22050,2,1)
                 pipelineStage = PipelineStage.STARTED
                 audioMessageHandler()
@@ -95,6 +106,7 @@ abstract class SatelliteAudioPipeline(
             } finally {
                 //TODO: Change to audio stop
                 withContext(NonCancellable) {
+                    cancelStageTimeout()
                     val msg = when (result) {
                         PipelineEndReason.END_OF_PIPELINE -> { "Pipeline ended normally" }
                         PipelineEndReason.FORCE_STOPPED -> { "Pipeline was terminated" }
@@ -116,6 +128,7 @@ abstract class SatelliteAudioPipeline(
     }
 
     fun stop() {
+        cancelStageTimeout()
         if (pipelineStage != PipelineStage.ENDED) sendMessage(buildAudioStopMessage())
         pipelineRunning.complete(PipelineEndReason.FORCE_STOPPED)
     }
@@ -174,14 +187,17 @@ abstract class SatelliteAudioPipeline(
 
     internal fun handleTranscribe() {
         pipelineStage = PipelineStage.LISTENING
+        setStageTimeout(seconds = 10, expected = "voice-started/transcript")
     }
 
     internal fun handleVoiceStarted() {
         pipelineStage = PipelineStage.VOICE_STARTED
+        setStageTimeout(seconds = 30, expected = "voice-stopped/transcript")
     }
 
     internal fun handleVoiceStopped() {
         pipelineStage = PipelineStage.VOICE_STOPPED
+        setStageTimeout(seconds = 15, expected = "transcript")
     }
 
     internal fun handleTranscript(packet: WyomingPacket) {
@@ -191,15 +207,18 @@ abstract class SatelliteAudioPipeline(
             return
         }
         pipelineStage = PipelineStage.AWAITING_RESPONSE
+        setStageTimeout(seconds = 10, expected = "synthesize/pipeline-ended")
     }
 
     internal fun handleSynthesize() {
         if (pipelineStage != PipelineStage.STREAMING_TTS) {
             pipelineStage = PipelineStage.AWAITING_TTS
         }
+        setStageTimeout(seconds = 10, expected = "audio-start")
     }
 
     internal fun handleAudioStart(msg: WyomingPacket) {
+        cancelStageTimeout()
         pipelineStage = PipelineStage.STREAMING_TTS
     }
 
@@ -210,6 +229,7 @@ abstract class SatelliteAudioPipeline(
     }
 
     internal fun handleAudioStop() {
+        cancelStageTimeout()
         scope.launch {
             try {
                 if (mediaManager.voicePlayer.isPlaying()) {
@@ -236,6 +256,7 @@ abstract class SatelliteAudioPipeline(
     }
 
     internal fun handlePipelineEnded() {
+        cancelStageTimeout()
         if (pipelineStage == PipelineStage.AWAITING_TTS || pipelineStage == PipelineStage.STREAMING_TTS) {
             Timber.d("Pipeline ended but TTS is in stage $pipelineStage. Waiting for TTS audio to complete")
         } else {
@@ -245,6 +266,7 @@ abstract class SatelliteAudioPipeline(
 
 
     internal fun handlePipelineError(event: WyomingPacket) {
+        cancelStageTimeout()
         val code = event.getProp("code")
         val text = event.getProp("text")
 
@@ -260,6 +282,28 @@ abstract class SatelliteAudioPipeline(
         config.eventBroadcaster.notifyEvent(Event("recognitionError", toastMessage, code))
 
         pipelineRunning.complete(PipelineEndReason.ERRORED)
+    }
+
+    private fun setStageTimeout(seconds: Int, expected: String) {
+        cancelStageTimeout()
+        stageTimeoutJob = scope.launch {
+            delay(seconds * 1000L)
+            if (!pipelineRunning.isCompleted) {
+                Timber.w("Pipeline timeout [$pipelineId] at stage $pipelineStage waiting for $expected")
+                if (pipelineStage == PipelineStage.LISTENING ||
+                    pipelineStage == PipelineStage.VOICE_STARTED ||
+                    pipelineStage == PipelineStage.VOICE_STOPPED
+                ) {
+                    sendMessage(buildAudioStopMessage())
+                }
+                pipelineRunning.complete(PipelineEndReason.TIMED_OUT)
+            }
+        }
+    }
+
+    private fun cancelStageTimeout() {
+        stageTimeoutJob?.cancel()
+        stageTimeoutJob = null
     }
 
 

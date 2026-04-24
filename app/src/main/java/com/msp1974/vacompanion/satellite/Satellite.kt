@@ -58,7 +58,7 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
     var clientId = clientIdString
     val mediaManager: SatelliteMediaManager = SatelliteMediaManager(context, config)
 
-    private var hasInitSettings: Boolean = false
+    private var hasInitSettings: Boolean = config.initSettings
 
     private var sensorRunner: Sensors? = null
     var motionTask = Camera(context, config)
@@ -372,7 +372,8 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
             }
 
         }.also {
-            it.run()
+            // Send initial detection for first-turn compatibility with older integrations.
+            it.run(sendDetection = !continuation)
         }
     }
 

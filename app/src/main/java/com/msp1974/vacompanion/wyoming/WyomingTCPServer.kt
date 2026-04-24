@@ -198,35 +198,57 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
                 "pong" -> {}
                 "describe" -> sendInfo(clientId)
                 "capabilities" -> sendCapabilities(clientId)
+                "custom-event" -> {
+                    if (!processPreSatelliteCustomEvent(packet)) {
+                        processSatelliteMessage(clientId, packet)
+                    }
+                }
                 "run-satellite" -> {
                     startSatellite(clientId)
                 }
                 "pause-satellite" -> stopSatellite()
-                else -> {
-                    var retryCount = 2
-                    var processed = false
-                    while (retryCount > 0) {
-                        if (satellite != null && satellite?.state != SatelliteState.STOPPED) {
-                            satellite?.processMessage(packet)
-                            processed = true
-                            break
-                        } else {
-                            retryCount--
-                            delay(1000)
-                        }
-                    }
-                    if (!processed) {
-                        Timber.w("Cannot process message ${packet.toMap()}")
-                        when {
-                            satellite == null -> Timber.w("Satellite is null")
-                            clientId != satellite?.clientId -> Timber.w("Client id does not match satellite id")
-                            satellite?.state == SatelliteState.STOPPED -> Timber.w("Satellite is stopped")
-                        }
-                    }
-                }
+                else -> processSatelliteMessage(clientId, packet)
             }
         } catch (ex: Exception) {
             Timber.e("Error processing event ${packet.type}: $ex")
+        }
+    }
+
+    private fun processPreSatelliteCustomEvent(packet: WyomingPacket): Boolean {
+        if (satellite != null) return false
+
+        val eventType = packet.getProp("event_type")
+        if (eventType != "settings") return false
+
+        val settings = packet.getProp("settings")
+        if (settings.isBlank()) return false
+
+        // Compatibility path for older integrations that send settings before run-satellite.
+        config.processSettings(settings)
+        Timber.d("Processed pre-satellite settings event")
+        return true
+    }
+
+    private suspend fun processSatelliteMessage(clientId: String, packet: WyomingPacket) {
+        var retryCount = 2
+        var processed = false
+        while (retryCount > 0) {
+            if (satellite != null && satellite?.state != SatelliteState.STOPPED) {
+                satellite?.processMessage(packet)
+                processed = true
+                break
+            } else {
+                retryCount--
+                delay(1000)
+            }
+        }
+        if (!processed) {
+            Timber.w("Cannot process message ${packet.toMap()}")
+            when {
+                satellite == null -> Timber.w("Satellite is null")
+                clientId != satellite?.clientId -> Timber.w("Client id does not match satellite id")
+                satellite?.state == SatelliteState.STOPPED -> Timber.w("Satellite is stopped")
+            }
         }
     }
 
