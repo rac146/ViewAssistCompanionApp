@@ -9,13 +9,14 @@ import io.ktor.network.selector.ActorSelectorManager
 import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.port
+import io.ktor.network.sockets.Socket
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -24,6 +25,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import timber.log.Timber
+import java.nio.channels.ClosedChannelException
 import java.util.concurrent.Executors
 
 interface IEvents {
@@ -59,7 +61,11 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
     var state: ServerState = ServerState.STOPPED
         set(value) {
             field = value
-            onState(value, restartIfStopped)
+            runCatching {
+                onState(value, restartIfStopped)
+            }.onFailure { ex ->
+                Timber.e(ex, "Error delivering Wyoming server state update: $value")
+            }
         }
 
     suspend fun startServer() {
@@ -68,6 +74,8 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
 
         state = ServerState.STARTING
         Timber.d("Wyoming TCP Server starting")
+        Timber.i("FRANKENSTEIN_WYOMING_MARKER=2026-04-25-a")
+        Timber.i("FRANKENSTEIN_STABILITY_PATCH=2026-04-25-b")
 
 
         try {
@@ -91,17 +99,18 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
         }
 
         withContext(Dispatchers.IO) {
-            try {
-                state = ServerState.RUNNING
-                restartIfStopped = true
-                while (runServer) {
-                    val socket = serverSocket?.accept()
+            state = ServerState.RUNNING
+            restartIfStopped = true
+            while (runServer) {
+                try {
+                    val socket = acceptClient(selector) ?: continue
 
+                    val remoteId = runCatching { socket.remoteAddress.toString() }.getOrDefault("unknown")
                     val data = buildJsonObject {
-                        put("remoteId", socket?.remoteAddress.toString())
+                        put("remoteId", remoteId)
                     }
 
-                    val client: WyomingClientHandler = object : WyomingClientHandler(scope, socket!!) {
+                    val client: WyomingClientHandler = object : WyomingClientHandler(scope, socket) {
                         override suspend fun onClientDisconnected(clientId: String) {
 
                             if (clientId in clients) {
@@ -137,38 +146,42 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
                     }
 
                     client.run()
-                    val id = socket.remoteAddress.port().toString()
+                    val id = client.socketId
                     clients[id] = Connection(id, client)
-                    Timber.d("Client connected: ${socket.remoteAddress}.  Total: ${clients.size}")
+                    Timber.d("Client connected: $remoteId.  Total: ${clients.size}")
                     onEvent("client_connected", data)
-
-                    yield()
-
+                } catch (e: CancellationException) {
+                    if (!runServer) break
+                    Timber.w("Server loop cancellation while runServer=true; continuing: $e")
+                    delay(250)
+                } catch (e: Throwable) {
+                    if (!runServer) break
+                    Timber.e("Unhandled server loop error (continuing): $e")
+                    delay(250)
                 }
-            } catch (e: Throwable) {
-                ensureActive()
-                Timber.e("Server Error: ${e.toString()}")
-            } finally {
-                withContext(NonCancellable) {
-                    Timber.d("Stopping Wyoming TCP Server...")
-                    state = ServerState.STOPPING
-                    stopSatellite()
-                    try {
-                        if (!clients.isEmpty()) {
-                            clients.forEach { client ->
-                                Timber.d("Stopping client: ${client.key}")
-                                client.value.handler.stop()
-                            }
-                            clients.clear()
+
+                yield()
+            }
+
+            withContext(NonCancellable) {
+                Timber.d("Stopping Wyoming TCP Server...")
+                state = ServerState.STOPPING
+                stopSatellite()
+                try {
+                    if (!clients.isEmpty()) {
+                        clients.forEach { client ->
+                            Timber.d("Stopping client: ${client.key}")
+                            client.value.handler.stop()
                         }
-                        serverSocket?.close()
-                        unregisterNSD()
-                    } catch (e: Exception) {
-                        Timber.e("Error when stopping server: $e")
+                        clients.clear()
                     }
-                    state = ServerState.STOPPED
-                    Timber.i("Wyoming TCP Server stopped")
+                    serverSocket?.close()
+                    unregisterNSD()
+                } catch (e: Exception) {
+                    Timber.e("Error when stopping server: $e")
                 }
+                state = ServerState.STOPPED
+                Timber.i("Wyoming TCP Server stopped")
             }
         }
     }
@@ -187,6 +200,39 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
         zeroconf.unregisterService()
     }
 
+    private suspend fun acceptClient(selector: ActorSelectorManager): Socket? {
+        return try {
+            val s = serverSocket ?: return null
+            s.accept()
+        } catch (ex: ClosedChannelException) {
+            if (!runServer) return null
+            Timber.w("Server socket channel closed unexpectedly. Rebinding listener...")
+            if (rebindServerSocket(selector)) {
+                null
+            } else {
+                delay(1000)
+                null
+            }
+        } catch (ex: Throwable) {
+            if (!runServer) return null
+            Timber.e("Error accepting client connection: $ex")
+            delay(300)
+            null
+        }
+    }
+
+    private suspend fun rebindServerSocket(selector: ActorSelectorManager): Boolean {
+        return try {
+            serverSocket?.close()
+            serverSocket = aSocket(selector).tcp().bind("0.0.0.0", config.serverPort)
+            Timber.i("Rebound Wyoming TCP listener at ${serverSocket?.localAddress}")
+            true
+        } catch (bindEx: Throwable) {
+            Timber.e("Failed to rebind Wyoming TCP listener: $bindEx")
+            false
+        }
+    }
+
     private suspend fun messageHandler(clientId: String, packet: WyomingPacket) {
         if (packet.type !in IGNORED_LOG_EVENTS) {
             Timber.d("Received <- ${clientId}: ${packet.toMap()}")
@@ -199,7 +245,7 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
                 "describe" -> sendInfo(clientId)
                 "capabilities" -> sendCapabilities(clientId)
                 "custom-event" -> {
-                    if (!processPreSatelliteCustomEvent(packet)) {
+                    if (!processPreSatelliteCustomEvent(clientId, packet)) {
                         processSatelliteMessage(clientId, packet)
                     }
                 }
@@ -214,19 +260,41 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
         }
     }
 
-    private fun processPreSatelliteCustomEvent(packet: WyomingPacket): Boolean {
+    private suspend fun processPreSatelliteCustomEvent(clientId: String, packet: WyomingPacket): Boolean {
         if (satellite != null) return false
 
         val eventType = packet.getProp("event_type")
-        if (eventType != "settings") return false
+        when (eventType) {
+            "settings" -> {
+                val settings = packet.getProp("settings")
+                if (settings.isBlank()) return false
 
-        val settings = packet.getProp("settings")
-        if (settings.isBlank()) return false
-
-        // Compatibility path for older integrations that send settings before run-satellite.
-        config.processSettings(settings)
-        Timber.d("Processed pre-satellite settings event")
-        return true
+                // Compatibility path for older integrations that send settings before run-satellite.
+                config.processSettings(settings)
+                Timber.d("Processed pre-satellite settings event")
+                return true
+            }
+            "capabilities" -> {
+                // Compatibility path for older integrations (0.10) that request capabilities
+                // via custom-event before starting the satellite.
+                respondToGenericMessage(
+                    clientId,
+                    "custom-event",
+                    buildJsonObject {
+                        put("event_type", "capabilities")
+                        put(
+                            "data",
+                            buildJsonObject {
+                                put("capabilities", DeviceCapabilitiesManager.toJson(deviceInfo))
+                            }
+                        )
+                    }
+                )
+                Timber.d("Processed pre-satellite capabilities request")
+                return true
+            }
+            else -> return false
+        }
     }
 
     private suspend fun processSatelliteMessage(clientId: String, packet: WyomingPacket) {

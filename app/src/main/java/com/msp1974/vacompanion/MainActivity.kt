@@ -137,6 +137,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         log.i("#################################################################################################")
         log.i("Starting View Assist Companion App")
         log.i("Version ${config.version}")
+        log.i("FRANKENSTEIN_BUILD_MARKER=2026-04-25-a")
         log.i("Android version: ${Helpers.getAndroidVersion()}")
         log.i("Name: ${Helpers.getDeviceName()}")
         log.i("Serial: ${Build.SERIAL}")

@@ -214,7 +214,6 @@ abstract class SatelliteAudioPipeline(
         if (pipelineStage != PipelineStage.STREAMING_TTS) {
             pipelineStage = PipelineStage.AWAITING_TTS
         }
-        setStageTimeout(seconds = 10, expected = "audio-start")
     }
 
     internal fun handleAudioStart(msg: WyomingPacket) {
