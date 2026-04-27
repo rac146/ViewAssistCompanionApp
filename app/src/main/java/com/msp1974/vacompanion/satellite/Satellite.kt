@@ -70,6 +70,8 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
     private var audioPipeline: SatelliteAudioPipeline? = null
     private var audioPipelineId = AtomicInteger(0)
     private var audioPipelineLastStateChange = System.currentTimeMillis()
+    private var directTtsActive: Boolean = false
+    private val standaloneAnnouncePlayer = LegacyPcmAnnouncePlayer()
 
     private var soundEffectFinishTime: Long = 0
 
@@ -163,6 +165,7 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
         state = SatelliteState.STOPPING
 
         stopAudioPipeline()
+        standaloneAnnouncePlayer.stop(force = true)
 
         mediaManager.stopAll()
 
@@ -182,8 +185,15 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
     suspend fun processMessage(packet: WyomingPacket) {
         when (packet.type) {
             "custom-event" -> customEventHandler(clientId, packet)
-            "audio-start" -> handleAudioStart(packet)
             else -> {
+                val routeStandalone = shouldRouteStandaloneTts(packet)
+                if (routeStandalone) {
+                    if (packet.type == "audio-start" || packet.type == "synthesize") {
+                        Timber.d("Routing ${packet.type} through standalone TTS path")
+                    }
+                    processStandaloneTtsMessage(packet)
+                    return
+                }
                 if (audioPipeline != null && audioPipeline?.pipelineStage != PipelineStage.ENDED) {
                     audioPipeline?.processAudioPipelineMessage(packet)
                 } else {
@@ -193,43 +203,67 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
         }
     }
 
+    private fun shouldRouteStandaloneTts(packet: WyomingPacket): Boolean {
+        val stage = audioPipeline?.pipelineStage
+        val pipelineExpectingTts = stage == PipelineStage.AWAITING_RESPONSE ||
+            stage == PipelineStage.AWAITING_TTS ||
+            stage == PipelineStage.STREAMING_TTS
+
+        return when (packet.type) {
+            "synthesize" -> directTtsActive || !pipelineExpectingTts
+            "audio-start" -> directTtsActive || !pipelineExpectingTts
+            "audio-chunk", "audio-stop", "pipeline-ended" -> directTtsActive || !pipelineExpectingTts
+            "error" -> {
+                directTtsActive || packet.getProp("code") == "tts_input"
+            }
+            else -> false
+        }
+    }
+
     private fun processStandaloneTtsMessage(packet: WyomingPacket) {
         when (packet.type) {
             "synthesize" -> {
                 // Compatibility path: announcements can arrive without a wake/pipeline session.
-                directTtsActive = true
-            }
-            "audio-start" -> {
-                if (!mediaManager.voicePlayer.isPlaying()) {
-                    mediaManager.voicePlayer.start(22050, 2, 1)
+                if (audioPipeline != null && audioPipeline?.pipelineStage != PipelineStage.ENDED) {
+                    // Avoid mixed pipeline/standalone audio routing for announce flows.
+                    audioPipeline?.stop()
+                    audioPipeline = null
                 }
                 directTtsActive = true
+                Timber.d("Standalone TTS synthesize received")
+                standaloneAnnouncePlayer.stop(force = true)
+            }
+            "audio-start" -> {
+                val incomingRate = packet.getProp("rate").toIntOrNull()
+                val incomingWidth = packet.getProp("width").toIntOrNull()
+                val incomingChannels = packet.getProp("channels").toIntOrNull()
+                Timber.d(
+                    "Standalone TTS audio-start incoming: rate=$incomingRate width=$incomingWidth channels=$incomingChannels; using fixed 0.10 format"
+                )
+                directTtsActive = true
+                standaloneAnnouncePlayer.play()
             }
             "audio-chunk" -> {
-                if (mediaManager.voicePlayer.isPlaying()) {
-                    mediaManager.voicePlayer.writeData(packet.payload)
+                if (directTtsActive && standaloneAnnouncePlayer.isPlaying()) {
+                    standaloneAnnouncePlayer.writeAudio(packet.payload)
                 }
             }
             "audio-stop" -> {
-                if (mediaManager.voicePlayer.isPlaying()) {
-                    mediaManager.voicePlayer.flush()
-                    mediaManager.voicePlayer.stop()
+                scope.launch {
+                    standaloneAnnouncePlayer.stop()
+                    if (directTtsActive) {
+                        sendSatelliteMessage(clientId, "played", buildJsonObject {})
+                    }
+                    directTtsActive = false
                 }
-                if (directTtsActive) {
-                    sendSatelliteMessage(clientId, "played", buildJsonObject { })
-                }
-                directTtsActive = false
             }
             "pipeline-ended" -> {
-                if (directTtsActive && mediaManager.voicePlayer.isPlaying()) {
-                    mediaManager.voicePlayer.stop()
-                }
+                standaloneAnnouncePlayer.stop(force = true)
                 directTtsActive = false
             }
             "error" -> {
-                if (directTtsActive && mediaManager.voicePlayer.isPlaying()) {
-                    mediaManager.voicePlayer.stop()
-                }
+                Timber.w("Standalone TTS error: code=${packet.getProp("code")} text=${packet.getProp("text")}")
+                standaloneAnnouncePlayer.stop(force = true)
                 directTtsActive = false
             }
         }
@@ -439,8 +473,11 @@ suspend fun handleAudioStart(packet: WyomingPacket) {
             }
 
         }.also {
-            // Send initial detection for first-turn compatibility with older integrations.
-            it.run(sendDetection = !continuation)
+            // Keep compatibility signal for older integrations on first turn only for ASR starts.
+            if (!continuation && startStage == PipelineStartStage.START_LISTENING) {
+                it.sendMessage(it.buildDetectionMessage())
+            }
+            it.run(startStage)
         }
     }
 

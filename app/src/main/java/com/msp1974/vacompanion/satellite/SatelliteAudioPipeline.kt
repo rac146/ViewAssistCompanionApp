@@ -71,6 +71,7 @@ abstract class SatelliteAudioPipeline(
     private var pipelineRunning = CompletableDeferred<PipelineEndReason>()
     private var audioInMessageQueue = Channel<WyomingPacket>(capacity = 1000)
     private var audioOutQueue = Channel<ByteArray>(capacity = 1000)
+    private var stageTimeoutJob: Job? = null
     private var result: PipelineEndReason = PipelineEndReason.NONE
     var stageStartTime: Long = System.currentTimeMillis()
     var pipelineStartStage: PipelineStartStage = PipelineStartStage.START_LISTENING
@@ -128,7 +129,7 @@ abstract class SatelliteAudioPipeline(
                     sendMessage(buildDetectionMessage())
                 }
                 Timber.d("Starting pipeline [$pipelineId]")
-                sendMessage(buildRunPipelineMessage())
+                sendMessage(buildRunPipelineMessage(startStage))
                 // 0.10 compatibility: older integrations can miss/lag the initial `transcribe`
                 // event. If that happens, start local streaming so audio still reaches HA.
                 scope.launch {
@@ -138,7 +139,6 @@ abstract class SatelliteAudioPipeline(
                         handleTranscribe()
                     }
                 }
-                mediaManager.voicePlayer.start(22050,2,1)
                 pipelineStage = PipelineStage.STARTED
                 watchDogTimer()
                 mediaManager.voicePlayer.start()
@@ -346,10 +346,17 @@ abstract class SatelliteAudioPipeline(
         val text = event.getProp("text")
 
         val isDuplicateWakeUp = code == "duplicate_wake_up_detected"
+        val isTtsInputError = code == "tts_input"
 
         if (isDuplicateWakeUp) {
             Timber.d("Speech-to-text cancelled to avoid duplicate wake-up. Handled gracefully.")
             pipelineRunning.complete(PipelineEndReason.DUPLICATE_WAKEUP)
+            return
+        }
+
+        if (isTtsInputError) {
+            Timber.w("Ignoring tts_input pipeline error in compat mode")
+            pipelineRunning.complete(PipelineEndReason.ERRORED)
             return
         }
 
