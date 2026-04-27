@@ -73,13 +73,30 @@ class SatelliteMediaManager(val context: Context, val config: APPConfig) {
     class VoiceManager(val context: Context) {
         val voiceService = Intent(context, VoicePlayerService::class.java)
 
-        fun start(rate: Int, width: Int, channels: Int) {
+        fun start() {
             if (!isRunning()) {
-                voiceService.putExtra("rate", rate)
-                voiceService.putExtra("width", width)
-                voiceService.putExtra("channels", channels)
                 context.startService(voiceService)
-              }
+            }
+        }
+
+        fun play(rate: Int, width: Int, channels: Int) {
+            VoicePlayerService.sInstance?.start(rate, width, channels)
+        }
+
+        fun requestAudioFocus() {
+            VoicePlayerService.sInstance?.hasAudioFocus?.let {
+                if (!it) {
+                    VoicePlayerService.sInstance?.requestAudioFocus()
+                }
+            }
+        }
+
+        fun abandonAudioFocus() {
+            VoicePlayerService.sInstance?.hasAudioFocus?.let {
+                if (it) {
+                    VoicePlayerService.sInstance?.abandonAudioFocus()
+                }
+            }
         }
 
         fun flush() {
@@ -98,6 +115,14 @@ class SatelliteMediaManager(val context: Context, val config: APPConfig) {
 
         fun writeData(data: ByteArray) {
             VoicePlayerService.sInstance?.writeAudio(data)
+        }
+
+        fun isReady(): Boolean {
+            return try {
+                VoicePlayerService.sInstance!!.isReady
+            } catch (e: Exception) {
+                false
+            }
         }
 
         fun isPlaying(): Boolean {

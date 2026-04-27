@@ -10,11 +10,15 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 
 class SoundEffectsPlayer(val context: Context) {
-    private val mainHandler = Handler(context.mainLooper)
     private val players = mutableMapOf<Int, ExoPlayer>()
+    private val _finished = MutableStateFlow(false)
+     val finished: StateFlow<Boolean> = _finished
 
     val audioAttributes: AudioAttributes = AudioAttributes.Builder()
         .setUsage(USAGE_NOTIFICATION)
@@ -42,6 +46,13 @@ class SoundEffectsPlayer(val context: Context) {
                 MediaItem.fromUri("android.resource://${context.packageName}/$resId".toUri())
             player.setAudioAttributes(audioAttributes, false)
             player.setMediaItem(mediaItem)
+            player.addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player  .STATE_ENDED) {
+                        _finished.value = true
+                    }
+                }
+            })
             return player
         } catch (ex: Exception) {
             ex.printStackTrace()
@@ -52,6 +63,7 @@ class SoundEffectsPlayer(val context: Context) {
     suspend fun play(resId: Int) {
         withContext(Dispatchers.Main) {
             try {
+                _finished.value = false
                 // Ensure only one feedback sound plays at a time
                 stopAllInternal()
 
@@ -66,6 +78,7 @@ class SoundEffectsPlayer(val context: Context) {
                         override fun onPlaybackStateChanged(playbackState: Int) {
                             if (playbackState == Player.STATE_ENDED) {
                                 adhocPlayer.release()
+                                _finished.value = true
                             }
                         }
                     })

@@ -13,7 +13,7 @@ internal class EmbeddingModel(
 ) : AutoCloseable {
 
     companion object {
-        private const val EMBEDDING_MODEL = "embedding_model.onnx"
+        private const val EMBEDDING_MODEL = "openwakeword/embedding_model.onnx"
     }
 
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()

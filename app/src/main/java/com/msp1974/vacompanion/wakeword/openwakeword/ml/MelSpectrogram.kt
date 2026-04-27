@@ -14,7 +14,7 @@ internal class MelSpectrogram(
 ) : AutoCloseable {
 
     companion object {
-        private const val MEL_SPECTROGRAM_MODEL = "melspectrogram.onnx"
+        private const val MEL_SPECTROGRAM_MODEL = "openwakeword/melspectrogram.onnx"
         private const val BATCH_SIZE = 1
     }
 

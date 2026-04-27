@@ -46,7 +46,7 @@ data class MessageQueueItem(
 abstract class WyomingTCPServer(private val context: Context, val config: APPConfig): IEvents {
 
     private val job = SupervisorJob()
-    private val scope = CoroutineScope(Dispatchers.Default + job)
+    private val scope = CoroutineScope(Dispatchers.IO + job)
 
     private var runServer: Boolean = true
     var satellite: Satellite? = null

@@ -255,7 +255,7 @@ private class EchoState(
  */
 private class AGCState {
     var targetLevel = 20000
-    var maxGain = 10f
+    var maxGain = 5f
     private var currentGain = 1.0f
     private val attackTime = 0.001f
     private val releaseTime = 0.1f

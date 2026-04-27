@@ -56,6 +56,6 @@ class AssetWakeWordProvider(
 
     companion object {
         private const val TAG = "AssetWakeWordProvider"
-        const val DEFAULT_WAKE_WORD_PATH = "wakeWords"
+        const val DEFAULT_WAKE_WORD_PATH = "microwakeword/wakeWords"
     }
 }

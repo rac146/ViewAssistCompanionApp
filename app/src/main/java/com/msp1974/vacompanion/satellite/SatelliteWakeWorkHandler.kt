@@ -19,6 +19,8 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
@@ -35,7 +37,7 @@ enum class WakeWordHandlerState {
 
 interface IWakeWordHandler {
     fun onStateChange(state: WakeWordHandlerState)
-    fun onAudio(audio: ByteArray)
+    suspend fun onAudio(audio: WakeWordEngineProvider.AudioResult.Audio)
     suspend fun onWakeWordDetected(detection: WakeWordEngineProvider.WakeWordDetection)
 
     suspend fun onStopWordDetected(detection: WakeWordEngineProvider.WakeWordDetection)
@@ -61,24 +63,6 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
     private var lastWakeWordDetectionScore = 0f
     private val detectionCooldowns = mutableMapOf<String, Long>()
     private val detectionCooldownMs: Long = 2000L
-    private val msPerChunk: Long = (VACAAudioFormat.DEFAULT_BUFFER_SIZE_IN_SHORTS  * 1000L) / VACAAudioFormat.SAMPLE_RATE_HZ
-
-    private val audioHistoryBuffer = LinkedList<WakeWordEngineProvider.AudioResult.Audio>()
-    private val historyBufferTargetDurationMs = 1000L
-    private val historyBufferMaxSize = (historyBufferTargetDurationMs / msPerChunk).toInt()
-    /**
-     * Lookback window (in ms) to include when flushing the history buffer to the server.
-     * This 200ms margin ensures we capture the transition between the wake-word and the
-     * user's command. This is crucial because wake-word detections (especially with
-     * sliding windows) often trigger on an average of the last several frames (N-2, N-1, N).
-     * By looking back, we avoid clipping the end of the wake-word or the start of
-     * the intent and provide the STT engine with enough acoustic context for a clean start.
-     *
-     * Note: This value is an initial estimate and requires empirical testing across different
-     * Android devices. Feedback from actual STT results is necessary to determine if this
-     * value is appropriate or if it results in excessive "pre-speech" noise.
-     */
-    private val historyBufferLookBackMs = 200L
     private var lastWakeDetectionTimestamp = 0L
 
     suspend fun run() {
@@ -156,9 +140,6 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
 
                         if (lastDetection == null || detectionCooldownMs == 0L || now - lastDetection >= detectionCooldownMs) {
                             Timber.i("Wake word detected: ${it.detection.wakeWord}")
-                            synchronized(audioHistoryBuffer) {
-                                audioHistoryBuffer.clear()
-                            }
                             wakeWordDetected(it.detection, engine!!.isStreaming())
                             detectionCooldowns[it.detection.wakeWordId] = now
                         }
@@ -181,15 +162,7 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
                 is WakeWordEngineProvider.AudioResult.Audio -> {
                     if (it.audio.size() > 0) {
                         if (engine!!.isStreaming()) {
-                            onAudio(it.audio.toByteArray())
-                        } else {
-                            // Add to history buffer even if not streaming
-                            synchronized(audioHistoryBuffer) {
-                                audioHistoryBuffer.addLast(it)
-                                if (audioHistoryBuffer.size > historyBufferMaxSize) {
-                                    audioHistoryBuffer.removeFirst()
-                                }
-                            }
+                            onAudio(it)
                         }
                     }
                 }
@@ -216,12 +189,6 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
 
     }
 
-    fun restartWakeWordDetection() {
-        Timber.d("Restarting wake word detection")
-        terminateWakeWordDetection()
-        //runWakeWordDetection()
-    }
-
     private suspend fun wakeWordDetected(detection: WakeWordEngineProvider.WakeWordDetection, isStreaming: Boolean) {
         Timber.i("${detection.wakeWord} wake word detected at ${detection.score}, threshold is ${config.wakeWordThreshold}")
         lastWakeDetectionTimestamp = detection.timestamp
@@ -234,7 +201,6 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
         )
 
         holdLastDetectionLevel(detection.score)
-        //BroadcastSender.sendBroadcast(context, BroadcastSender.WAKE_WORD_DETECTED)
         onWakeWordDetected(detection)
     }
 

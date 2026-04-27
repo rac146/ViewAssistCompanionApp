@@ -157,8 +157,10 @@ class OpenWakeWordEngine(
                         }
 
                         // Emit audio result even if not streaming so that the controller can maintain a rolling history buffer
-                        val a = AudioDSP().floatArrayToByteBuffer(audio)
-                        emit(AudioResult.Audio(ByteString.copyFrom(a), timestamp = frameTimestamp))
+                        if (isStreaming) {
+                            val a = AudioDSP().floatArrayToByteBuffer(audio)
+                            emit(AudioResult.Audio(ByteString.copyFrom(a), timestamp = frameTimestamp))
+                        }
 
                         val detections = processAudio(audio, frameTimestamp)
                         for (detection in detections) {

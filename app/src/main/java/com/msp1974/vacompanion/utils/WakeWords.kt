@@ -13,12 +13,12 @@ import kotlin.io.path.isDirectory
 
 class WakeWords(val context: Context) {
     var availableWakeWords = mapOf(
-        "alexa" to WakeWord("Alexa", "alexa.onnx"),
-        "hey_jarvis" to WakeWord("Hey Jarvis", "hey_jarvis.onnx"),
-        "hey_mycroft" to WakeWord("Hey Mycroft", "hey_mycroft.onnx"),
-        "hey_raspy" to WakeWord("Hey Rhasspy", "hey_rhasspy.onnx"),
-        "ok_nabu" to WakeWord("Ok Nabu", "ok_nabu.onnx"),
-        "ok_computer" to WakeWord("Ok Computer", "ok_computer.onnx")
+        "alexa" to WakeWord("Alexa", "openwakeword/alexa.onnx"),
+        "hey_jarvis" to WakeWord("Hey Jarvis", "openwakeword/hey_jarvis.onnx"),
+        "hey_mycroft" to WakeWord("Hey Mycroft", "openwakeword/hey_mycroft.onnx"),
+        "hey_raspy" to WakeWord("Hey Rhasspy", "openwakeword/hey_rhasspy.onnx"),
+        "ok_nabu" to WakeWord("Ok Nabu", "openwakeword/ok_nabu.onnx"),
+        "ok_computer" to WakeWord("Ok Computer", "openwakeword/ok_computer.onnx")
     )
 
     fun getCustomWakeWords(path: String): Map<String, WakeWord> {

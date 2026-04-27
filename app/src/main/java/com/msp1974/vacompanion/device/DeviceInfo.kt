@@ -12,6 +12,9 @@ import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.os.BatteryManager
 import android.os.Build
 import android.webkit.WebView
@@ -187,6 +190,9 @@ class DeviceCapabilitiesManager(val context: Context, val config: APPConfig) {
                 "maxNotificationVolume",
                 audioManager.getStreamMaxVolume(AudioManager.STREAM_NOTIFICATION)
             )
+            put("hasAGC", AutomaticGainControl.isAvailable())
+            put("hasNS", NoiseSuppressor.isAvailable())
+            put("hasAEC", AcousticEchoCanceler.isAvailable())
         }
     }
 
@@ -207,6 +213,9 @@ class DeviceCapabilitiesManager(val context: Context, val config: APPConfig) {
                 putJsonObject("audio") {
                     put("max_music_volume", data.audioInfo.getValue("maxMusicVolume"))
                     put("max_notification_volume", data.audioInfo.getValue("maxNotificationVolume"))
+                    put("has_agc", data.audioInfo.getValue("hasAGC"))
+                    put("has_ns", data.audioInfo.getValue("hasNS"))
+                    put("has_aec", data.audioInfo.getValue("hasAEC"))
                 }
                 putJsonArray("sensors") {
                     addAll(data.sensors)

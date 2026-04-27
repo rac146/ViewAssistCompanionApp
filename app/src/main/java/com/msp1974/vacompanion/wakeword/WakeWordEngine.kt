@@ -1,21 +1,14 @@
 package com.msp1974.vacompanion.wakeword
 
-import android.Manifest
 import android.content.Context
-import androidx.annotation.RequiresPermission
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.utils.WakeWords
 import com.msp1974.vacompanion.wakeword.microwakeword.MicroWakeWordEngine
 import com.msp1974.vacompanion.wakeword.microwakeword.providers.AssetWakeWordProvider
 import com.msp1974.vacompanion.wakeword.openwakeword.OpenWakeWordEngine
-import com.msp1974.vacompanion.wakeword.openwakeword.model.DetectionMode
 import com.msp1974.vacompanion.wakeword.openwakeword.model.WakeWordDetection
 import com.msp1974.vacompanion.wakeword.openwakeword.model.WakeWordModel
-import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flow
-import timber.log.Timber
-import javax.inject.Inject
 
 data class WakeWord(val name: String, val fileName: String, val builtIn: Boolean = true)
 enum class WakeWordEngineModel {MICROWAKEWORD, OPENWAKEWORD}
@@ -29,8 +22,8 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
 
     private suspend fun get(): WakeWordEngineProvider? {
         if (engine == WakeWordEngineModel.MICROWAKEWORD) {
-            val availableWakeWords = AssetWakeWordProvider(context.assets, "wakeWords").get()
-            val availableStopWords = AssetWakeWordProvider(context.assets, "stopWords").get()
+            val availableWakeWords = AssetWakeWordProvider(context.assets, "microwakeword/wakeWords").get()
+            val availableStopWords = AssetWakeWordProvider(context.assets, "microwakeword/stopWords").get()
             return MicroWakeWordEngine(context, config, activeWakeWords, activeStopWords, availableWakeWords, availableStopWords, muted = config.isMuted)
         } else if (engine == WakeWordEngineModel.OPENWAKEWORD){
             val wakeWords = WakeWords(context).getWakeWords()

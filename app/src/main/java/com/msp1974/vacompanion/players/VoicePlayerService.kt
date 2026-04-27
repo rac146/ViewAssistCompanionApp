@@ -19,8 +19,9 @@ class VoicePlayerService() : Service() {
     private lateinit var audioManager: AudioManager
     private var mediaPlayer: AudioTrack? = null
     private var focusRequest: AudioFocusRequest? = null
-    private var hasAudioFocus = false
+    var hasAudioFocus = false
 
+    var isReady = false
     var isPlaying = false
 
     companion object {
@@ -44,19 +45,11 @@ class VoicePlayerService() : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val rate = intent?.getIntExtra("rate", DEFAULT_RATE) ?: DEFAULT_RATE
-        val channels = intent?.getIntExtra("channels", DEFAULT_CHANNELS) ?: DEFAULT_CHANNELS
-        val width = intent?.getIntExtra("width", DEFAULT_WIDTH)?: DEFAULT_WIDTH
-
-        if (mediaPlayer == null) {
-            mediaPlayer = createPlayer(rate, channels, width)
-            mediaPlayer?.setVolume(1.0f)
-        }
-        start()
+        requestAudioFocus()
         return START_NOT_STICKY
     }
 
-    private fun createPlayer(rate: Int, channels: Int, width: Int ): AudioTrack {
+    private fun createPlayer(rate: Int, width: Int, channels: Int ): AudioTrack {
         val channels = if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
         val encoding = if (width == 2) AudioFormat.ENCODING_PCM_16BIT else AudioFormat.ENCODING_PCM_8BIT
 
@@ -80,25 +73,26 @@ class VoicePlayerService() : Service() {
             .build()
     }
 
-    fun start() {
+    fun start(rate: Int, width: Int, channels: Int) {
         Timber.d("Playing voice audio")
-        val player = mediaPlayer ?: return
+        mediaPlayer = createPlayer(rate, width, channels)
+        mediaPlayer?.setVolume(1.0f)
 
         try {
-            requestAudioFocus()
-            player.play()
-            isPlaying = true
+            mediaPlayer?.play()
+            isReady = true
         } catch (e: Exception) {
             Timber.e("Error playing voice audio: $e")
         }
     }
 
     fun writeAudio(buffer: ByteArray) {
-        if (!isPlaying) {
-            Timber.w("Sending voice audio to non playing player")
+        if (!isReady) {
+            Timber.w("Sending voice audio to non ready player")
             return
         }
         try {
+            isPlaying = true
             val writeResult = mediaPlayer?.write(buffer, 0, buffer.size) ?: 0
             if (writeResult < 0) {
                 Timber.w("AudioTrack write failed with code $writeResult")
@@ -118,9 +112,11 @@ class VoicePlayerService() : Service() {
                 } else {
                     track.stop()
                 }
+                isReady = false
+                isPlaying = false
+
                 track.release()
                 abandonAudioFocus()
-                isPlaying = false
                 mediaPlayer = null
             } catch (e: Exception) {
                 Timber.w("Error stopping voice audio: ${e.message}")
@@ -129,7 +125,7 @@ class VoicePlayerService() : Service() {
     }
 
     @SuppressLint("UnsafeOptInUsageError")
-    private fun requestAudioFocus(): Boolean {
+    fun requestAudioFocus(): Boolean {
         @SuppressLint("UnsafeOptInUsageError")
         focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
             .setAudioAttributes(audioAttributes)
@@ -166,7 +162,7 @@ class VoicePlayerService() : Service() {
     }
 
     @SuppressLint("UnsafeOptInUsageError")
-    private fun abandonAudioFocus() {
+    fun abandonAudioFocus() {
         if (hasAudioFocus) audioManager.abandonAudioFocusRequest(focusRequest!!)
         hasAudioFocus = false
         Timber.d("Voice abandonAudioFocus")

@@ -83,7 +83,9 @@ class SatelliteCustomEventHandler(
                 }
             }
             "wakeWordTrigger" -> {
-                satellite.handleWakeWordDetection()
+                scope.launch {
+                    satellite.handleWakeWordDetection()
+                }
             }
             "recognitionError" -> {
                 val errorText = event.oldValue as? String ?: ""

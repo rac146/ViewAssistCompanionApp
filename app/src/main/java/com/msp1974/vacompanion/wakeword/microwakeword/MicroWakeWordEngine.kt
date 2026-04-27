@@ -91,8 +91,15 @@ open class MicroWakeWordEngine (
                     }
 
                     // Emit audio result even if not streaming so that the controller can maintain a rolling history buffer
-                    emit(AudioResult.Audio(ByteString.copyFrom(audio), timestamp = frameTimestamp))
-                    audio.rewind()
+                    if (isStreaming) {
+                        emit(
+                            AudioResult.Audio(
+                                ByteString.copyFrom(audio),
+                                timestamp = frameTimestamp
+                            )
+                        )
+                        audio.rewind()
+                    }
 
                     // Always run audio through the models, even if not currently streaming, to keep
                     // their internal state up to date
