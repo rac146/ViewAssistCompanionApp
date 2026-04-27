@@ -69,6 +69,7 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
     private var audioPipeline: SatelliteAudioPipeline? = null
     private var audioPipelineId = AtomicInteger(0)
     private var audioPipelineLastStateChange = System.currentTimeMillis()
+    private var directTtsActive: Boolean = false
 
 
     @OptIn(ExperimentalAtomicApi::class)
@@ -183,7 +184,51 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
             else -> {
                 if (audioPipeline != null && audioPipeline?.pipelineStage != PipelineStage.ENDED) {
                     audioPipeline?.processAudioPipelineMessage(packet)
+                } else {
+                    processStandaloneTtsMessage(packet)
                 }
+            }
+        }
+    }
+
+    private fun processStandaloneTtsMessage(packet: WyomingPacket) {
+        when (packet.type) {
+            "synthesize" -> {
+                // Compatibility path: announcements can arrive without a wake/pipeline session.
+                directTtsActive = true
+            }
+            "audio-start" -> {
+                if (!mediaManager.voicePlayer.isPlaying()) {
+                    mediaManager.voicePlayer.start(22050, 2, 1)
+                }
+                directTtsActive = true
+            }
+            "audio-chunk" -> {
+                if (mediaManager.voicePlayer.isPlaying()) {
+                    mediaManager.voicePlayer.writeData(packet.payload)
+                }
+            }
+            "audio-stop" -> {
+                if (mediaManager.voicePlayer.isPlaying()) {
+                    mediaManager.voicePlayer.flush()
+                    mediaManager.voicePlayer.stop()
+                }
+                if (directTtsActive) {
+                    sendSatelliteMessage(clientId, "played", buildJsonObject { })
+                }
+                directTtsActive = false
+            }
+            "pipeline-ended" -> {
+                if (directTtsActive && mediaManager.voicePlayer.isPlaying()) {
+                    mediaManager.voicePlayer.stop()
+                }
+                directTtsActive = false
+            }
+            "error" -> {
+                if (directTtsActive && mediaManager.voicePlayer.isPlaying()) {
+                    mediaManager.voicePlayer.stop()
+                }
+                directTtsActive = false
             }
         }
     }
@@ -435,6 +480,7 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
                     val payload = Json.parseToJsonElement(payloadStr).jsonObject
                     handleAlarmAction(payload["activate"]?.jsonPrimitive?.booleanOrNull ?: false, payload["url"]?.jsonPrimitive?.contentOrNull ?: "")
                 }
+                else -> Timber.w("Unhandled custom action: $action")
             }
         }.onFailure { Timber.e("Failed to handle custom action $action: $it") }
     }
