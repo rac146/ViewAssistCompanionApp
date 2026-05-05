@@ -25,6 +25,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import timber.log.Timber
+import java.nio.channels.ClosedChannelException
 import java.util.concurrent.Executors
 
 interface IEvents {
@@ -53,6 +54,7 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
     private lateinit var zeroconf: Zeroconf
     private var serverSocket: ServerSocket? = null
     private var restartIfStopped: Boolean = false
+    private var lastStopReason: String = "unknown"
 
     private var deviceInfo: DeviceCapabilitiesData = DeviceCapabilitiesManager(context, config).getDeviceInfo()
     private val infoBuilder: WyomingInfoBuilder = WyomingInfoBuilder(context, config, deviceInfo)
@@ -76,7 +78,7 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
                 aSocket(selector).tcp().bind("0.0.0.0", config.serverPort)
             Timber.d("Wyoming TCP Server started and listening at ${serverSocket?.localAddress}")
         } catch (e: Throwable) {
-            Timber.e("Server Error: ${e.toString()}")
+            Timber.e(e, "Server bind error")
             return
         }
 
@@ -96,13 +98,42 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
                 state = ServerState.RUNNING
                 restartIfStopped = true
                 while (runServer) {
-                    val socket = serverSocket?.accept()
-
-                    val data = buildJsonObject {
-                        put("remoteId", socket?.remoteAddress.toString())
+                    val socket = try {
+                        serverSocket?.accept()
+                    } catch (e: Throwable) {
+                        if (!runServer && e is ClosedChannelException) {
+                            Timber.d("Server socket closed while stopping; exiting accept loop")
+                            break
+                        }
+                        if (e is ClosedChannelException) {
+                            Timber.w("Accept loop saw closed channel while running; continuing")
+                            continue
+                        }
+                        throw e
                     }
 
-                    val client: WyomingClientHandler = object : WyomingClientHandler(scope, socket!!) {
+                    if (socket == null) {
+                        if (runServer) {
+                            Timber.w("Accept returned null socket while runServer=true")
+                            continue
+                        }
+                        break
+                    }
+
+                    val remoteAddress = runCatching { socket.remoteAddress.toString() }
+                        .getOrElse {
+                            "unknown-remote(${it::class.simpleName})"
+                        }
+                    val id = runCatching { socket.remoteAddress.port().toString() }
+                        .getOrElse {
+                            "unknown-${System.nanoTime()}"
+                        }
+
+                    val data = buildJsonObject {
+                        put("remoteId", remoteAddress)
+                    }
+
+                    val client: WyomingClientHandler = object : WyomingClientHandler(scope, socket) {
                         override suspend fun onClientDisconnected(clientId: String) {
 
                             if (clientId in clients) {
@@ -143,17 +174,20 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
                         }
                     }
 
-                    val id = socket.remoteAddress.port().toString()
                     clients[id] = Connection(id, client)
-                    Timber.d("Client connected: ${socket.remoteAddress}.  Total: ${clients.size}")
+                    Timber.d("Client connected: $remoteAddress.  Total: ${clients.size}")
                     onEvent("client_connected", data)
                 }
             } catch (e: Throwable) {
                 ensureActive()
-                Timber.e("Server Error: ${e.toString()}")
+                lastStopReason = "startServer-loop-exception:${e::class.simpleName}"
+                Timber.e(e, "Server loop error. runServer=$runServer state=$state")
             } finally {
                 withContext(NonCancellable) {
-                    Timber.d("Stopping Wyoming TCP Server...")
+                    Timber.w(
+                        Throwable("stop-trace"),
+                        "Stopping Wyoming TCP Server... reason=$lastStopReason runServer=$runServer restartIfStopped=$restartIfStopped state=$state"
+                    )
                     state = ServerState.STOPPING
                     stopSatellite()
                     try {
@@ -164,7 +198,7 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
                             }
                             clients.clear()
                         }
-                        serverSocket?.close()
+                        closeServerSocket("startServer-finally")
                         unregisterNSD()
                     } catch (e: Exception) {
                         Timber.e("Error when stopping server: $e")
@@ -177,9 +211,27 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
     }
 
     fun stopServer(restartAfterStop: Boolean = false) {
+        lastStopReason = "stopServer(restartAfterStop=$restartAfterStop)"
         restartIfStopped = restartAfterStop
         runServer = false
-        serverSocket?.close()
+        Timber.w(
+            Throwable("stopServer-call-trace"),
+            "stopServer invoked. restartAfterStop=$restartAfterStop state=$state clients=${clients.size}"
+        )
+        closeServerSocket("stopServer")
+    }
+
+    private fun closeServerSocket(reason: String) {
+        if (serverSocket == null) {
+            Timber.d("closeServerSocket skipped (already null). reason=$reason")
+            return
+        }
+        Timber.w(Throwable("server-socket-close-trace"), "Closing server socket. reason=$reason")
+        runCatching {
+            serverSocket?.close()
+        }.onFailure { e ->
+            Timber.e(e, "Error closing server socket. reason=$reason")
+        }
     }
 
     private fun registerNSD() {
