@@ -43,7 +43,8 @@ abstract class WyomingClientHandler (
     val socket: Socket
 ): IClientHandler {
     var runClient: Boolean = true
-    val socketId = socket.remoteAddress.port().toString()
+    val socketId = runCatching { socket.remoteAddress.port().toString() }
+        .getOrElse { "unknown-${System.nanoTime()}" }
     val clientId = socketId
     var lastMessage: Long = System.currentTimeMillis()
     private lateinit var watchDogJob: Job
