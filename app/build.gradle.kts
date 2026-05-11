@@ -150,5 +150,6 @@ dependencies {
     implementation(libs.jtransforms)
     implementation(libs.hilt.android)
     ksp(libs.hilt.android.compiler)
+    implementation("com.github.rizukirr:audx-android:v2.0.0")
 
 }

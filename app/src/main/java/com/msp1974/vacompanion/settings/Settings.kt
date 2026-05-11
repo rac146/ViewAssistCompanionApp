@@ -136,6 +136,14 @@ class APPConfig @Inject constructor(val context: Context) {
         onValueChangedListener(property, oldValue, newValue)
     }
 
+    var experimentalRnNoise: Boolean by Delegates.observable(true) { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
+    var experimentalRnNoiseVadThreshold: Float by Delegates.observable(0.55f) { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
     var screenBrightness: Float by Delegates.observable(DEFAULT_SCREEN_BRIGHTNESS) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
@@ -299,6 +307,8 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["music_volume"]?.jsonPrimitive?.floatOrNull?.let { musicVolume = it.toInt() }
         settings["ducking_volume"]?.jsonPrimitive?.floatOrNull?.let { duckingVolume = it.toInt() }
         settings["mic_gain"]?.jsonPrimitive?.intOrNull?.let { micGain = it }
+        settings["experimental_rnnoise"]?.jsonPrimitive?.booleanOrNull?.let { experimentalRnNoise = it }
+        settings["experimental_rnnoise_vad_threshold"]?.jsonPrimitive?.floatOrNull?.let { experimentalRnNoiseVadThreshold = it.coerceIn(0f, 1f) }
         settings["mute"]?.jsonPrimitive?.booleanOrNull?.let { isMuted = it }
         settings["screen_brightness"]?.jsonPrimitive?.floatOrNull?.let { screenBrightness = it / 100 }
         settings["screen_auto_brightness"]?.jsonPrimitive?.booleanOrNull?.let { screenAutoBrightness = it }

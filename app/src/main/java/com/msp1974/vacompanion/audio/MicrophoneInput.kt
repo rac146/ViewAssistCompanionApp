@@ -32,6 +32,11 @@ class MicrophoneInput (
 
     val isRecording get() = audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING
     val speex = SpeexProcessor(sampleRate = sampleRateInHz, frameSize = if (frameSize > 0) frameSize else bufferSize )
+    private val rnNoise = RnNoiseProcessor(
+        enabled = config.experimentalRnNoise,
+        sampleRateHz = sampleRateInHz,
+        vadThreshold = config.experimentalRnNoiseVadThreshold
+    )
 
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     fun start() {
@@ -62,13 +67,17 @@ class MicrophoneInput (
         val audioRecord = this.audioRecord ?: error("Microphone not started")
         val readCount = audioRecord.read(audioBuffer, 0, audioBuffer.size)
         if (readCount > 0) {
+            var processed = audioBuffer.copyOfRange(0, readCount)
             if (useSpeex && !AutomaticGainControl.isAvailable()) {
                 speex.echoSuppressionEnabled = false
                 speex.denoiseEnabled = false
                 speex.setMaxAGCGain(10f + (config.micGain * 1.95f))
-                return speex.processFrame(audioBuffer.copyOfRange(0, readCount))
+                processed = speex.processFrame(processed)
             }
-            return audioBuffer.copyOfRange(0, readCount)
+            if (rnNoise.isActive() || config.experimentalRnNoise) {
+                processed = rnNoise.process(processed)
+            }
+            return processed
         }
         return ShortArray(0)
     }
@@ -126,6 +135,8 @@ class MicrophoneInput (
 
         ns?.release()
         ns = null
+
+        rnNoise.close()
 
         audioRecord?.let {
             if (isRecording) {
