@@ -144,6 +144,18 @@ class APPConfig @Inject constructor(val context: Context) {
         onValueChangedListener(property, oldValue, newValue)
     }
 
+    var experimentalMwwSmoothingWindow: Int by Delegates.observable(3) { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
+    var experimentalMwwConsecutiveHits: Int by Delegates.observable(2) { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
+    var experimentalMwwCooldownMs: Int by Delegates.observable(1500) { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
     var screenBrightness: Float by Delegates.observable(DEFAULT_SCREEN_BRIGHTNESS) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
@@ -309,6 +321,9 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["mic_gain"]?.jsonPrimitive?.intOrNull?.let { micGain = it }
         settings["experimental_rnnoise"]?.jsonPrimitive?.booleanOrNull?.let { experimentalRnNoise = it }
         settings["experimental_rnnoise_vad_threshold"]?.jsonPrimitive?.floatOrNull?.let { experimentalRnNoiseVadThreshold = it.coerceIn(0f, 1f) }
+        settings["experimental_mww_smoothing_window"]?.jsonPrimitive?.intOrNull?.let { experimentalMwwSmoothingWindow = it.coerceIn(1, 8) }
+        settings["experimental_mww_consecutive_hits"]?.jsonPrimitive?.intOrNull?.let { experimentalMwwConsecutiveHits = it.coerceIn(1, 5) }
+        settings["experimental_mww_cooldown_ms"]?.jsonPrimitive?.intOrNull?.let { experimentalMwwCooldownMs = it.coerceIn(200, 10_000) }
         settings["mute"]?.jsonPrimitive?.booleanOrNull?.let { isMuted = it }
         settings["screen_brightness"]?.jsonPrimitive?.floatOrNull?.let { screenBrightness = it / 100 }
         settings["screen_auto_brightness"]?.jsonPrimitive?.booleanOrNull?.let { screenAutoBrightness = it }

@@ -38,13 +38,17 @@ class OpenWakeWordEngine(
 
     private val assetManager: AssetManager = context.assets
     private val modelProcessors = mutableMapOf<WakeWordModel, ModelProcessor>()
-    private val detectionCooldowns = mutableMapOf<String, Long>()
+    private val detectionStates = mutableMapOf<String, OwwDetectionState>()
 
     var isEnabled = true
 
     private var _audioProcessor: AudioProcessor = AudioProcessor(assetManager)
-    private val slidingWindowSize = 3
-    private val probabilities = ArrayDeque<Float>(slidingWindowSize)
+
+    private data class OwwDetectionState(
+        val scores: ArrayDeque<Float> = ArrayDeque(),
+        var consecutiveHits: Int = 0,
+        var lastTriggeredAtMs: Long = 0L
+    )
 
     /**
      * Flow of wake word detection events.
@@ -197,12 +201,25 @@ class OpenWakeWordEngine(
                 try {
                     val score = processor.process(audioFeatures)
                     if (score > model.threshold) {
+                        val smoothedScore = updateSmoothedScore(
+                            modelName = model.name,
+                            score = score,
+                            windowSize = config.experimentalMwwSmoothingWindow
+                        )
+                        val shouldTrigger = shouldTrigger(
+                            modelName = model.name,
+                            smoothedScore = smoothedScore,
+                            threshold = model.threshold,
+                            requiredHits = config.experimentalMwwConsecutiveHits,
+                            cooldownMs = maxOf(detectionCooldownMs, config.experimentalMwwCooldownMs.toLong()),
+                            nowMs = timestamp
+                        )
                         detections.add(
                             WakeWordDetection(
                                 model.name,
                                 model.name,
-                                isWakeWordDetected(model, score),
-                                score,
+                                shouldTrigger,
+                                smoothedScore,
                                 timestamp = timestamp
                             )
                         )
@@ -218,12 +235,36 @@ class OpenWakeWordEngine(
         return detections
     }
 
-    private fun isWakeWordDetected(model: WakeWordModel, probability: Float): Boolean {
-        if (probabilities.size == slidingWindowSize)
-            probabilities.removeFirst()
-        probabilities.add(probability)
+    private fun updateSmoothedScore(
+        modelName: String,
+        score: Float,
+        windowSize: Int
+    ): Float {
+        val state = detectionStates.getOrPut(modelName) { OwwDetectionState() }
+        state.scores.addLast(score)
+        while (state.scores.size > windowSize) {
+            state.scores.removeFirst()
+        }
+        return state.scores.average().toFloat()
+    }
 
-        return probabilities.size == slidingWindowSize && probabilities.average() > model.threshold
+    private fun shouldTrigger(
+        modelName: String,
+        smoothedScore: Float,
+        threshold: Float,
+        requiredHits: Int,
+        cooldownMs: Long,
+        nowMs: Long
+    ): Boolean {
+        val state = detectionStates.getOrPut(modelName) { OwwDetectionState() }
+        state.consecutiveHits = if (smoothedScore >= threshold) state.consecutiveHits + 1 else 0
+        val onCooldown = nowMs - state.lastTriggeredAtMs < cooldownMs
+        if (state.consecutiveHits >= requiredHits && !onCooldown) {
+            state.lastTriggeredAtMs = nowMs
+            state.consecutiveHits = 0
+            return true
+        }
+        return false
     }
 
     fun enable() {
@@ -236,6 +277,7 @@ class OpenWakeWordEngine(
 
     fun reset() {
         _audioProcessor.reset()
+        detectionStates.clear()
     }
 
     /**

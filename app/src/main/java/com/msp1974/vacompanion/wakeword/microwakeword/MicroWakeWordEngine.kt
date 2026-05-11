@@ -23,6 +23,12 @@ import kotlinx.coroutines.yield
 import timber.log.Timber
 import kotlin.collections.plus
 
+private data class MwwDetectionState(
+    val scores: ArrayDeque<Float> = ArrayDeque(),
+    var consecutiveHits: Int = 0,
+    var lastTriggeredAtMs: Long = 0L
+)
+
 open class MicroWakeWordEngine (
     val context: Context,
     val config: APPConfig,
@@ -71,6 +77,7 @@ open class MicroWakeWordEngine (
             val microphoneInput = MicrophoneInput(config, audioSource)
             var wakeWords = activeWakeWords.value
             var stopWords = activeStopWords.value
+            val detectionStates = mutableMapOf<String, MwwDetectionState>()
 
             try {
                 var detector = createDetector(wakeWords, stopWords)
@@ -82,6 +89,7 @@ open class MicroWakeWordEngine (
                         stopWords = activeStopWords.value
                         detector.close()
                         detector = createDetector(wakeWords, stopWords)
+                        detectionStates.clear()
                     }
 
                     val audio = microphoneInput.readBytes()
@@ -108,12 +116,35 @@ open class MicroWakeWordEngine (
                     // their internal state up to date
                     val detections = detector.detect(audio)
                     for (detection in detections) {
-                        if (detection.score > 0.1f) {
-                            if (detection.wakeWordId in wakeWords) {
-                                emit(AudioResult.WakeDetected(detection.copy(timestamp = frameTimestamp)))
-                            } else if (detection.wakeWordId in stopWords) {
-                                emit(AudioResult.StopDetected(detection.copy(timestamp = frameTimestamp)))
-                            }
+                        val isWakeWord = detection.wakeWordId in wakeWords
+                        val isStopWord = detection.wakeWordId in stopWords
+                        if (!isWakeWord && !isStopWord) continue
+
+                        val smoothedScore = updateSmoothedScore(
+                            detectionStates = detectionStates,
+                            wakeWordId = detection.wakeWordId,
+                            score = detection.score,
+                            windowSize = config.experimentalMwwSmoothingWindow
+                        )
+
+                        val detectionThreshold = maxOf(config.wakeWordThreshold, 0.1f)
+                        val shouldTrigger = shouldTrigger(
+                            detectionStates = detectionStates,
+                            wakeWordId = detection.wakeWordId,
+                            smoothedScore = smoothedScore,
+                            threshold = detectionThreshold,
+                            requiredHits = config.experimentalMwwConsecutiveHits,
+                            cooldownMs = config.experimentalMwwCooldownMs.toLong(),
+                            nowMs = frameTimestamp
+                        )
+
+                        if (shouldTrigger) {
+                            val output = detection.copy(
+                                score = smoothedScore,
+                                timestamp = frameTimestamp
+                            )
+                            if (isWakeWord) emit(AudioResult.WakeDetected(output))
+                            if (isStopWord) emit(AudioResult.StopDetected(output))
                         }
                     }
 
@@ -128,6 +159,40 @@ open class MicroWakeWordEngine (
                 emit(AudioResult.EngineStatus("Stopped"))
             }
         }
+    }
+
+    private fun updateSmoothedScore(
+        detectionStates: MutableMap<String, MwwDetectionState>,
+        wakeWordId: String,
+        score: Float,
+        windowSize: Int
+    ): Float {
+        val state = detectionStates.getOrPut(wakeWordId) { MwwDetectionState() }
+        state.scores.addLast(score)
+        while (state.scores.size > windowSize) {
+            state.scores.removeFirst()
+        }
+        return state.scores.average().toFloat()
+    }
+
+    private fun shouldTrigger(
+        detectionStates: MutableMap<String, MwwDetectionState>,
+        wakeWordId: String,
+        smoothedScore: Float,
+        threshold: Float,
+        requiredHits: Int,
+        cooldownMs: Long,
+        nowMs: Long
+    ): Boolean {
+        val state = detectionStates.getOrPut(wakeWordId) { MwwDetectionState() }
+        state.consecutiveHits = if (smoothedScore >= threshold) state.consecutiveHits + 1 else 0
+        val onCooldown = nowMs - state.lastTriggeredAtMs < cooldownMs
+        if (state.consecutiveHits >= requiredHits && !onCooldown) {
+            state.lastTriggeredAtMs = nowMs
+            state.consecutiveHits = 0
+            return true
+        }
+        return false
     }
 
     private suspend fun createDetector(
