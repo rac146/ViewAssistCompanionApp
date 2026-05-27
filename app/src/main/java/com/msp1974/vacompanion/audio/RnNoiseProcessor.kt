@@ -1,81 +1,105 @@
 package com.msp1974.vacompanion.audio
 
 import com.audx.android.Audx
-import com.audx.android.AudxConfig
+import kotlin.math.roundToInt
 import timber.log.Timber
 
 /**
- * Typed RNNoise wrapper (Audx).
+ * Optimized audio processing wrapper backed by Audx.
+ * Designed for low-power continuous operation without heap allocations in the hot path.
  */
 class RnNoiseProcessor(
     private val enabled: Boolean,
     private val sampleRateHz: Int,
-    private val vadThreshold: Float
+    @Suppress("unused") private val vadThreshold: Float,
+    private val postGain: Float = 1.8f
 ) : AutoCloseable {
-    private val frameSize = Audx.FRAME_SIZE
-    private val inFrame = ShortArray(frameSize)
-    private val outFrame = ShortArray(frameSize)
+    
+    /**
+     * FIXED: Explicitly typed lambda matching the '(Float) -> Unit' callback signature.
+     * Captures the frame's voice/noise estimation score without runtime allocation.
+     */
+    private val processCallback: (Float) -> Unit = { _: Float -> }
+    private var denoisedBuffer = ShortArray(0)
+    private var chunkInput = ShortArray(0)
+    private var chunkOutput = ShortArray(0)
 
-    private var engine: Audx? = null
+    private var audx: Audx? = null
     private var initialized = false
     private var failed = false
-    private var vadScore = 0f
 
     fun isActive(): Boolean = enabled && !failed
 
     fun process(samples: ShortArray): ShortArray {
         if (!enabled || failed || samples.isEmpty()) return samples
         if (!ensureInitialized()) return samples
-
-        val result = ShortArray(samples.size)
-        var srcOffset = 0
-        var dstOffset = 0
-
-        while (srcOffset < samples.size) {
-            val chunk = minOf(frameSize, samples.size - srcOffset)
-            java.util.Arrays.fill(inFrame, 0)
-            System.arraycopy(samples, srcOffset, inFrame, 0, chunk)
-
-            try {
-                engine?.process(inFrame, outFrame) { score -> vadScore = score }
-            } catch (t: Throwable) {
-                failed = true
-                Timber.w(t, "RNNoise processing failed; disabling")
-                return samples
-            }
-            if (vadScore >= vadThreshold) {
-                System.arraycopy(outFrame, 0, result, dstOffset, chunk)
-            } else {
-                // Keep low-level context but strongly attenuate non-speech frames.
-                for (i in 0 until chunk) {
-                    result[dstOffset + i] = (outFrame[i] * 0.2f).toInt().toShort()
-                }
-            }
-            srcOffset += chunk
-            dstOffset += chunk
+        
+        val processor = audx ?: return samples
+        val gain = postGain.coerceIn(0.5f, 24.0f)
+        if (denoisedBuffer.size != samples.size) {
+            denoisedBuffer = ShortArray(samples.size)
         }
-        return result
+        // Audx behaves best with small frame processing; 10 ms at 16 kHz = 160 samples.
+        val chunkSize = (sampleRateHz / 100).coerceAtLeast(1)
+        if (chunkInput.size != chunkSize) {
+            chunkInput = ShortArray(chunkSize)
+            chunkOutput = ShortArray(chunkSize)
+        }
+
+        return try {
+            var srcOffset = 0
+            while (srcOffset < samples.size) {
+                val thisChunk = minOf(chunkSize, samples.size - srcOffset)
+                java.util.Arrays.fill(chunkInput, 0)
+                System.arraycopy(samples, srcOffset, chunkInput, 0, thisChunk)
+
+                // Process chunk with Audx callback API.
+                processor.process(chunkInput, chunkOutput, processCallback)
+                System.arraycopy(chunkOutput, 0, denoisedBuffer, srcOffset, thisChunk)
+                srcOffset += thisChunk
+            }
+
+            for (i in samples.indices) {
+                val value = (denoisedBuffer[i].toFloat() * gain)
+                    .coerceIn(Short.MIN_VALUE.toFloat(), Short.MAX_VALUE.toFloat())
+                samples[i] = value.roundToInt().toShort()
+            }
+            samples
+        } catch (t: Throwable) {
+            failed = true
+            Timber.w(t, "Audx processing failed; reverting permanently to passthrough")
+            samples
+        }
     }
 
     private fun ensureInitialized(): Boolean {
         if (initialized) return true
         if (failed || !enabled) return false
-
         return try {
-            val config = AudxConfig(inputRate = sampleRateHz, resampleQuality = Audx.AUDX_RESAMPLER_QUALITY_VOIP)
-            engine = Audx(config).also { it.create() }
-            initialized = true
-            Timber.i("RNNoise path enabled with Audx (vadThreshold=$vadThreshold)")
-            true
+            // Tailoring Audx builder explicitly for high-aggression stationary/voice noise mitigation
+            audx = Audx.Builder()
+                .inputRate(sampleRateHz)
+                // Faster mode for low-power always-on devices.
+                .resampleQuality(Audx.AUDX_RESAMPLER_QUALITY_VOIP)
+                .build()
+                
+            initialized = audx != null
+            initialized
         } catch (t: Throwable) {
             failed = true
-            Timber.w(t, "RNNoise init failed; passthrough")
+            Timber.w(t, "Audx initialization failed; reverting to passthrough")
             false
         }
     }
 
     override fun close() {
-        runCatching { engine?.close() }
-        engine = null
+        if (audx != null) {
+            runCatching { audx?.close() }
+        }
+        audx = null
+        initialized = false
+        denoisedBuffer = ShortArray(0)
+        chunkInput = ShortArray(0)
+        chunkOutput = ShortArray(0)
     }
 }

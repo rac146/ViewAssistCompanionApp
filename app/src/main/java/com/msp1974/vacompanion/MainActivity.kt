@@ -327,6 +327,8 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             addAction(BroadcastSender.WEBVIEW_CRASH)
             addAction(BroadcastSender.TOAST_MESSAGE)
             addAction(BroadcastSender.CLOSE_APP)
+            addAction(BroadcastSender.DEBUG_AUDIO_CAPTURE_STARTED)
+            addAction(BroadcastSender.DEBUG_AUDIO_CAPTURE_STOPPED)
         }
         LocalBroadcastManager.getInstance(this)
             .registerReceiver(satelliteBroadcastReceiver, filter)
@@ -386,6 +388,12 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 }
                 BroadcastSender.CLOSE_APP -> {
                     terminateApp()
+                }
+                BroadcastSender.DEBUG_AUDIO_CAPTURE_STARTED -> {
+                    viewModel.setDebugAudioCaptureActive(true)
+                }
+                BroadcastSender.DEBUG_AUDIO_CAPTURE_STOPPED -> {
+                    viewModel.setDebugAudioCaptureActive(false)
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     if (initialised) {

@@ -31,7 +31,7 @@ object VACAAudioFormat {
     const val FRAME_SIZE_10MS = SAMPLE_RATE_HZ / 100  // 160
 
     const val DEFAULT_AUDIO_SOURCE = MediaRecorder.AudioSource.VOICE_RECOGNITION
-    const val FALLBACK_AUDIO_SOURCE = MediaRecorder.AudioSource.MIC
+    const val FALLBACK_AUDIO_SOURCE = MediaRecorder.AudioSource.VOICE_RECOGNITION
 
     const val DEFAULT_BUFFER_SIZE_IN_SHORTS = 1280
 }

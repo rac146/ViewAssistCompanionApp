@@ -136,7 +136,15 @@ class APPConfig @Inject constructor(val context: Context) {
         onValueChangedListener(property, oldValue, newValue)
     }
 
-    var experimentalRnNoise: Boolean by Delegates.observable(true) { property, oldValue, newValue ->
+    var experimentalRnNoise: Boolean by Delegates.observable(false) { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
+    var experimentalAudioBackend: String by Delegates.observable(AUDIO_BACKEND_WEBRTC_APM) { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
+    var experimentalWebRtcApm: Boolean by Delegates.observable(true) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
 
@@ -144,11 +152,11 @@ class APPConfig @Inject constructor(val context: Context) {
         onValueChangedListener(property, oldValue, newValue)
     }
 
-    var experimentalMwwSmoothingWindow: Int by Delegates.observable(3) { property, oldValue, newValue ->
+    var experimentalMwwSmoothingWindow: Int by Delegates.observable(4) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
 
-    var experimentalMwwConsecutiveHits: Int by Delegates.observable(2) { property, oldValue, newValue ->
+    var experimentalMwwConsecutiveHits: Int by Delegates.observable(3) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
 
@@ -319,8 +327,43 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["music_volume"]?.jsonPrimitive?.floatOrNull?.let { musicVolume = it.toInt() }
         settings["ducking_volume"]?.jsonPrimitive?.floatOrNull?.let { duckingVolume = it.toInt() }
         settings["mic_gain"]?.jsonPrimitive?.intOrNull?.let { micGain = it }
+        val hasAudioBackend = settings.containsKey("experimental_audio_backend")
+        settings["experimental_audio_backend"]?.jsonPrimitive?.contentOrNull?.let {
+            experimentalAudioBackend = normalizeAudioBackend(it)
+        }
+
+        val hasWebRtcApm = settings.containsKey("experimental_webrtc_apm")
+        val hasRnNoise = settings.containsKey("experimental_rnnoise")
+        settings["experimental_webrtc_apm"]?.jsonPrimitive?.booleanOrNull?.let { experimentalWebRtcApm = it }
         settings["experimental_rnnoise"]?.jsonPrimitive?.booleanOrNull?.let { experimentalRnNoise = it }
         settings["experimental_rnnoise_vad_threshold"]?.jsonPrimitive?.floatOrNull?.let { experimentalRnNoiseVadThreshold = it.coerceIn(0f, 1f) }
+
+        if (!hasAudioBackend && (hasWebRtcApm || hasRnNoise)) {
+            experimentalAudioBackend = when {
+            experimentalWebRtcApm -> AUDIO_BACKEND_WEBRTC_APM
+                experimentalRnNoise -> AUDIO_BACKEND_RNNOISE
+                else -> AUDIO_BACKEND_NONE
+            }
+        }
+
+        when (experimentalAudioBackend) {
+            AUDIO_BACKEND_WEBRTC_APM -> {
+                experimentalWebRtcApm = true
+                experimentalRnNoise = false
+            }
+            AUDIO_BACKEND_PLATFORM_DSP -> {
+                experimentalWebRtcApm = false
+                experimentalRnNoise = false
+            }
+            AUDIO_BACKEND_RNNOISE -> {
+                experimentalWebRtcApm = false
+                experimentalRnNoise = true
+            }
+            else -> {
+                experimentalWebRtcApm = false
+                experimentalRnNoise = false
+            }
+        }
         settings["experimental_mww_smoothing_window"]?.jsonPrimitive?.intOrNull?.let { experimentalMwwSmoothingWindow = it.coerceIn(1, 8) }
         settings["experimental_mww_consecutive_hits"]?.jsonPrimitive?.intOrNull?.let { experimentalMwwConsecutiveHits = it.coerceIn(1, 5) }
         settings["experimental_mww_cooldown_ms"]?.jsonPrimitive?.intOrNull?.let { experimentalMwwCooldownMs = it.coerceIn(200, 10_000) }
@@ -404,5 +447,19 @@ class APPConfig @Inject constructor(val context: Context) {
         const val DEFAULT_MUTE = false
         const val DEFAULT_MIC_GAIN = 0
         const val GITHUB_API_URL = "https://api.github.com/repos/msp1974/ViewAssist_Companion_App/releases"
+        const val AUDIO_BACKEND_WEBRTC_APM = "webrtc_apm"
+        const val AUDIO_BACKEND_PLATFORM_DSP = "platform_dsp"
+        const val AUDIO_BACKEND_RNNOISE = "rnnoise"
+        const val AUDIO_BACKEND_NONE = "none"
+
+        private fun normalizeAudioBackend(value: String): String {
+            return when (value.lowercase()) {
+                "platform_dsp" -> AUDIO_BACKEND_PLATFORM_DSP
+                "webrtc_apm" -> AUDIO_BACKEND_WEBRTC_APM
+                "rnnoise" -> AUDIO_BACKEND_RNNOISE
+                "none", "off", "disabled" -> AUDIO_BACKEND_NONE
+                else -> AUDIO_BACKEND_WEBRTC_APM
+            }
+        }
     }
 }

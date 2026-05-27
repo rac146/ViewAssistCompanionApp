@@ -44,6 +44,11 @@ android {
         versionName = "0.11.1"
         versionCode = code
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        externalNativeBuild {
+            cmake {
+                cppFlags += ""
+            }
+        }
     }
 
     signingConfigs {
@@ -80,6 +85,12 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
@@ -148,8 +159,8 @@ dependencies {
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.ui.compose)
     implementation(libs.jtransforms)
+    implementation("com.github.rizukirr:audx-android:v2.1.2")
+    implementation("io.github.kaleyravideo:android-deepfilternet:0.0.8")
     implementation(libs.hilt.android)
     ksp(libs.hilt.android.compiler)
-    implementation("com.github.rizukirr:audx-android:v2.0.0")
-
 }

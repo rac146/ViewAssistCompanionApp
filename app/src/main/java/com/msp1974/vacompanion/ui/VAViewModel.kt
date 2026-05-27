@@ -79,7 +79,8 @@ data class State(
     var permissions: PermissionsStatus = PermissionsStatus(),
     var updates: UpdateStatus = UpdateStatus(),
     var webViewPageLoadingStage: PageLoadingStage = PageLoadingStage.NOT_STARTED,
-    var showUUIDChangeDialog: Boolean = false
+    var showUUIDChangeDialog: Boolean = false,
+    var debugAudioCaptureActive: Boolean = false
     )
 
 @HiltViewModel
@@ -265,6 +266,14 @@ class VAViewModel @Inject constructor(
         }
     }
 
+    fun setDebugAudioCaptureActive(active: Boolean) {
+        _vacaState.update { currentState ->
+            currentState.copy(
+                debugAudioCaptureActive = active
+            )
+        }
+    }
+
     fun setWebViewPageLoadingState(stage: PageLoadingStage) {
         Timber.d("WebView page loading state: $stage")
         _vacaState.update { currentState ->
@@ -348,4 +357,3 @@ class VAViewModel @Inject constructor(
         }
     }
 }
-

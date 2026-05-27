@@ -19,6 +19,8 @@ class BroadcastSender {
         internal const val VERSION_MISMATCH = "VERSION_MISMATCH"
         internal const val REQUEST_MISSING_PERMISSIONS = "REQUEST_MISSING_PERMISSIONS"
         internal const val CLOSE_APP = "CLOSE_APP"
+        internal const val DEBUG_AUDIO_CAPTURE_STARTED = "DEBUG_AUDIO_CAPTURE_STARTED"
+        internal const val DEBUG_AUDIO_CAPTURE_STOPPED = "DEBUG_AUDIO_CAPTURE_STOPPED"
 
 
         fun sendBroadcast(context: Context, action: String, extra: String? = null) {
