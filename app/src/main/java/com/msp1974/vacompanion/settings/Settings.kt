@@ -145,6 +145,10 @@ class APPConfig @Inject constructor(val context: Context) {
         onValueChangedListener(property, oldValue, newValue)
     }
 
+    var experimentalAudioBackend: String by Delegates.observable(DEFAULT_AUDIO_BACKEND) { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
     var notificationVolume: Int by Delegates.observable(DEFAULT_NOTIFICATION_VOLUME) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
@@ -365,6 +369,12 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["experimental_mww_smoothing_window"]?.jsonPrimitive?.intOrNull?.let { experimentalMwwSmoothingWindow = it }
         settings["experimental_mww_consecutive_hits"]?.jsonPrimitive?.intOrNull?.let { experimentalMwwConsecutiveHits = it }
         settings["experimental_mww_cooldown_ms"]?.jsonPrimitive?.intOrNull?.let { experimentalMwwCooldownMs = it }
+        settings["experimental_audio_backend"]?.jsonPrimitive?.contentOrNull?.let { experimentalAudioBackend = it }
+        settings["experimental_webrtc_apm"]?.jsonPrimitive?.booleanOrNull?.let { enabled ->
+            if (enabled) {
+                experimentalAudioBackend = AUDIO_BACKEND_WEBRTC_APM
+            }
+        }
         settings["custom_files"]?.let { customFiles = it }
 
         firebase.addToCrashLog("Settings update")
@@ -421,6 +431,9 @@ class APPConfig @Inject constructor(val context: Context) {
         const val DEFAULT_MIC_GAIN = 0
         const val DEFAULT_SPEAKER_VERIFICATION_THRESHOLD = 0.40f
         const val DEFAULT_SPEAKER_VERIFICATION_MODEL_PATH = "speaker/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"
+        const val AUDIO_BACKEND_PLATFORM_DSP = "platform_dsp"
+        const val AUDIO_BACKEND_WEBRTC_APM = "webrtc_apm"
+        const val DEFAULT_AUDIO_BACKEND = AUDIO_BACKEND_PLATFORM_DSP
         const val GITHUB_API_URL = "https://api.github.com/repos/msp1974/ViewAssist_Companion_App/releases"
     }
 }
