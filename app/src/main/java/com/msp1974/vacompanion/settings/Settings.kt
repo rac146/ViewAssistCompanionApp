@@ -433,7 +433,7 @@ class APPConfig @Inject constructor(val context: Context) {
         const val DEFAULT_SPEAKER_VERIFICATION_MODEL_PATH = "speaker/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"
         const val AUDIO_BACKEND_PLATFORM_DSP = "platform_dsp"
         const val AUDIO_BACKEND_WEBRTC_APM = "webrtc_apm"
-        const val DEFAULT_AUDIO_BACKEND = AUDIO_BACKEND_PLATFORM_DSP
+        const val DEFAULT_AUDIO_BACKEND = AUDIO_BACKEND_WEBRTC_APM
         const val GITHUB_API_URL = "https://api.github.com/repos/msp1974/ViewAssist_Companion_App/releases"
     }
 }
