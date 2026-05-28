@@ -86,6 +86,11 @@ class SatelliteCustomEventHandler(
                     satellite.handleWakeWordDetection()
                 }
             }
+            "speakerEnrollmentStart" -> {
+                scope.launch {
+                    satellite.startSpeakerEnrollment()
+                }
+            }
             "recognitionError" -> {
                 val errorText = event.oldValue as? String ?: ""
                 if (errorText.isNotEmpty()) {

@@ -68,6 +68,7 @@ fun WebViewScreen (webView: CustomWebView, vaViewModel: VAViewModel = viewModel(
         if (vaUiState.diagnosticInfo.show) {
             DiagnosticBar(
                 vaUiState.diagnosticInfo,
+                onEnrollSpeakerClick = { vaViewModel.startSpeakerEnrollment() },
                 modifier = Modifier.align(Alignment.TopCenter)
             )
         }
@@ -119,6 +120,5 @@ fun WebView(
         }
     )
 }
-
 
 

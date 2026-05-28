@@ -28,6 +28,7 @@ import com.msp1974.vacompanion.satellite.AudioRouteOption
 @Composable
 fun DiagnosticBar(
     diagnosticInfo: DiagnosticInfo,
+    onEnrollSpeakerClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -67,6 +68,15 @@ fun DiagnosticBar(
 
             )
             Column() {
+                if (onEnrollSpeakerClick != null) {
+                    AssistChip(
+                        onClick = { onEnrollSpeakerClick() },
+                        label = { Text("Enroll Speaker") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    )
+                }
                 AssistChip(
                     onClick = {},
                     label = { Text(if (diagnosticInfo.engine != "") diagnosticInfo.engine else "Disabled") },
@@ -108,7 +118,8 @@ fun DiagnosticBarPreview() {
             detectionLevel = 8.1f,
             detectionThreshold = 5f,
             vadDetection = true
-        )
+        ),
+        onEnrollSpeakerClick = {}
     )
 
 }

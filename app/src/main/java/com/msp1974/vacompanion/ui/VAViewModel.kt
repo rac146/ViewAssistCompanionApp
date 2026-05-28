@@ -393,5 +393,8 @@ class VAViewModel @Inject constructor(
             config.eventBroadcaster.notifyEvent(Event("restartZeroconf", "", ""))
         }
     }
-}
 
+    fun startSpeakerEnrollment() {
+        config.eventBroadcaster.notifyEvent(Event("speakerEnrollmentStart", "", ""))
+    }
+}

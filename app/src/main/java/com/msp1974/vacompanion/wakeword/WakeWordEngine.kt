@@ -115,6 +115,10 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
         return false
     }
 
+    fun startSpeakerEnrollment() {
+        engineInstance?.startSpeakerEnrollment()
+    }
+
     fun start() = flow {
         engineInstance = get()
         if (engineInstance != null) {

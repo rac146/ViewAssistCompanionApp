@@ -41,7 +41,8 @@ abstract class WakeWordEngineProvider {
         return false
     }
 
+    open fun startSpeakerEnrollment() {}
+
     open fun release() {}
 
 }
-
