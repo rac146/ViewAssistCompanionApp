@@ -47,7 +47,7 @@ class MicrophoneInput (
                     sampleRateHz = sampleRateInHz,
                     channels = 1,
                     suppressionLevel = 3,
-                    postGain = 1.0f,
+                    postGain = resolveWebRtcPostGain(),
                     vadEnabled = true,
                     vadMode = 3
                 )
@@ -101,6 +101,13 @@ class MicrophoneInput (
 
     private fun useWebRtcApmBackend(): Boolean {
         return config.experimentalAudioBackend.equals(APPConfig.AUDIO_BACKEND_WEBRTC_APM, ignoreCase = true)
+    }
+
+    private fun resolveWebRtcPostGain(): Float {
+        // Reuse existing mic gain control to provide makeup gain after WebRTC NS.
+        // Keeps the same user tuning surface while preventing extreme clipping.
+        //return (1.5f + (config.micGain.coerceAtLeast(0) * 0.45f)).coerceIn(1.5f, 6.0f)
+        return (8.0f + (config.micGain.coerceAtLeast(0) * 1.2f)).coerceIn(8.0f, 24.0f)
     }
 
     fun readFloat(bufferSize: Int = VACAAudioFormat.DEFAULT_BUFFER_SIZE_IN_SHORTS): FloatArray {
