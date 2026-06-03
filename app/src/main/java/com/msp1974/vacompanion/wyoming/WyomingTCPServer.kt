@@ -132,7 +132,7 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
                             put("remoteId", remoteAddress)
                         }
 
-                    val client: WyomingClientHandler = object : WyomingClientHandler(scope, socket) {
+                        val client: WyomingClientHandler = object : WyomingClientHandler(scope, socket) {
                         override suspend fun onClientDisconnected(clientId: String) {
 
                                 if (clientId in clients) {

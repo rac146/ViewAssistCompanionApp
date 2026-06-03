@@ -429,7 +429,7 @@ class APPConfig @Inject constructor(val context: Context) {
         const val DEFAULT_DUCKING_VOLUME = 2
         const val DEFAULT_MUTE = false
         const val DEFAULT_MIC_GAIN = 0
-        const val DEFAULT_SPEAKER_VERIFICATION_THRESHOLD = 0.40f
+        const val DEFAULT_SPEAKER_VERIFICATION_THRESHOLD = 0.25f
         const val DEFAULT_SPEAKER_VERIFICATION_MODEL_PATH = "speaker/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"
         const val AUDIO_BACKEND_PLATFORM_DSP = "platform_dsp"
         const val AUDIO_BACKEND_WEBRTC_APM = "webrtc_apm"

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.res.AssetManager
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.os.Environment
 import androidx.annotation.RequiresPermission
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
@@ -26,6 +27,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import timber.log.Timber
 import java.io.File
+import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.LinkedList
 import kotlin.math.sqrt
@@ -54,9 +56,10 @@ class OpenWakeWordEngine(
 
     private var _audioProcessor: AudioProcessor = AudioProcessor(assetManager)
     private val audioRingBuffer = LinkedList<FloatArray>()
+    private val audioScoreRingBuffer = LinkedList<Map<String, Float>>()
     private val audioRingBufferLock = Any()
     private val audioRingBufferMaxFrames = 20
-    private val speakerVerificationWindowMs = 750
+    private val speakerVerificationWindowMs = 1600
     private val speakerVerificationMinWindowMs = 250
     private val speakerVerificationNumThreads = 2
     private val speakerVerificationRejectCooldownMs = 2500L
@@ -66,7 +69,9 @@ class OpenWakeWordEngine(
     private var speakerVerifierSignature: String? = null
     @Volatile private var suppressOwwUntilMs: Long = 0L
     @Volatile private var speakerEnrollmentRequested = false
+    @Volatile private var latestFrameScores: Map<String, Float> = emptyMap()
     private var enrollmentState: SpeakerEnrollmentState? = null
+    private val wakeClipDumpScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private data class SpeakerEnrollmentState(
         val targetSamples: Int,
@@ -203,7 +208,8 @@ class OpenWakeWordEngine(
                             continue
                         }
 
-                        addToAudioRingBuffer(audio)
+                        val detections = processAudio(audio, frameTimestamp)
+                        addToAudioRingBuffer(audio, latestFrameScores)
 
                         if (config.diagnosticsEnabled) {
                             emit(AudioResult.AudioLevel(AudioDSP().audioLevel(audio)))
@@ -219,7 +225,6 @@ class OpenWakeWordEngine(
                             )
                         }
 
-                        val detections = processAudio(audio, frameTimestamp)
                         for (detection in detections) {
                             if (detection.detected) {
                                 val nowMs = System.currentTimeMillis()
@@ -281,6 +286,9 @@ class OpenWakeWordEngine(
     @SuppressLint("DefaultLocale")
     fun processAudio(audioBuffer: FloatArray, timestamp: Long = System.currentTimeMillis()): List<WakeWordDetection> {
         val detections = mutableListOf<WakeWordDetection>()
+        // Raw per-frame scores used by OWW boundary extraction for speaker verification.
+        // Keep trigger logic on smoothed scores, but store raw scores in the ring buffer.
+        val frameScores = mutableMapOf<String, Float>()
 
         if (isEnabled) {
             val audioFeatures = _audioProcessor.getAudioFeatures(audioBuffer)
@@ -292,6 +300,7 @@ class OpenWakeWordEngine(
                         score = score,
                         windowSize = config.experimentalMwwSmoothingWindow
                     )
+                    frameScores[model.name] = score
                     val shouldTrigger = evaluateTrigger(
                         modelName = model.name,
                         smoothedScore = smoothedScore,
@@ -319,6 +328,7 @@ class OpenWakeWordEngine(
                 }
             }
         }
+        latestFrameScores = frameScores
         return detections
     }
 
@@ -401,14 +411,17 @@ class OpenWakeWordEngine(
     fun clearAudioRingBuffer() {
         synchronized(audioRingBufferLock) {
             audioRingBuffer.clear()
+            audioScoreRingBuffer.clear()
         }
     }
 
-    private fun addToAudioRingBuffer(frame: FloatArray) {
+    private fun addToAudioRingBuffer(frame: FloatArray, scores: Map<String, Float>) {
         synchronized(audioRingBufferLock) {
             audioRingBuffer.add(frame.copyOf())
+            audioScoreRingBuffer.add(HashMap(scores))
             while (audioRingBuffer.size > audioRingBufferMaxFrames) {
                 audioRingBuffer.removeFirst()
+                audioScoreRingBuffer.removeFirst()
             }
         }
     }
@@ -416,8 +429,10 @@ class OpenWakeWordEngine(
     private fun addPaddingToAudioRingBuffer(frame: FloatArray) {
         synchronized(audioRingBufferLock) {
             audioRingBuffer.addLast(frame.copyOf())
+            audioScoreRingBuffer.addLast(emptyMap())
             while (audioRingBuffer.size > audioRingBufferMaxFrames + 1) {
                 audioRingBuffer.removeFirst()
+                audioScoreRingBuffer.removeFirst()
             }
         }
     }
@@ -522,6 +537,8 @@ class OpenWakeWordEngine(
     }
 
     private fun finishSpeakerEnrollment(state: SpeakerEnrollmentState) {
+        queueEnrollmentWavDump(state.utterances, config.wakeWord)
+
         val configuredModelPath = config.speakerVerificationModelPath.trim()
         if (configuredModelPath.isEmpty()) {
             toast("Speaker enrollment failed: model path is missing")
@@ -578,6 +595,16 @@ class OpenWakeWordEngine(
             config.speakerVerificationEmbeddingPath = outputPath
             config.speakerVerificationEnabled = true
             speakerVerifierSignature = null
+            val totalSamples = state.utterances.sumOf { it.size }
+            val totalMs = if (config.sampleRate > 0) {
+                (totalSamples.toDouble() * 1000.0 / config.sampleRate.toDouble())
+            } else 0.0
+            Timber.i(
+                "Speaker enrollment complete samples=%d utterances=%d total_ms=%.1f",
+                totalSamples,
+                state.utterances.size,
+                totalMs
+            )
             toast("Speaker enrollment complete (${embeddings.size} samples)")
         } catch (t: Throwable) {
             Timber.w(t, "Speaker enrollment processing failed")
@@ -690,9 +717,12 @@ class OpenWakeWordEngine(
             }
         }
 
-        val tRingStartNs = System.nanoTime()
-        val verificationAudio = flattenAudioRingBufferTail(speakerVerificationWindowMs)
-        val ringCopyMs = ((System.nanoTime() - tRingStartNs) / 1_000_000.0)
+        val tExtractStartNs = System.nanoTime()
+        val verificationAudio = extractWakeSegmentForVerification(detection)
+        val extractMs = ((System.nanoTime() - tExtractStartNs) / 1_000_000.0)
+        val tDumpQueueStartNs = System.nanoTime()
+        queueWakeClipWavDump(detection, verificationAudio)
+        val dumpQueueMs = ((System.nanoTime() - tDumpQueueStartNs) / 1_000_000.0)
         val verificationDurationMs = ((verificationAudio.size.toFloat() / config.sampleRate.toFloat()) * 1000f).toInt()
         if (verificationDurationMs < speakerVerificationMinWindowMs) {
             Timber.w(
@@ -721,11 +751,12 @@ class OpenWakeWordEngine(
             verificationDurationMs
         )
         Timber.i(
-            "Speaker verification timing wake='%s' audioMs=%d samples=%d ring_copy_ms=%.1f verify_ms=%.1f total_ms=%.1f",
+            "Speaker verification timing wake='%s' audioMs=%d samples=%d extract_ms=%.1f dump_queue_ms=%.1f verify_ms=%.1f total_ms=%.1f",
             detection.wakeWord,
             verificationDurationMs,
             verificationAudio.size,
-            ringCopyMs,
+            extractMs,
+            dumpQueueMs,
             verifyMs,
             totalMs
         )
@@ -749,6 +780,329 @@ class OpenWakeWordEngine(
         )
         suppressOwwUntilMs = System.currentTimeMillis() + speakerVerificationRejectCooldownMs
         return config.speakerVerificationFailOpen && result.reason != "below_threshold"
+    }
+
+    private fun extractWakeSegmentForVerification(detection: WakeWordDetection): FloatArray {
+        val (frames, scoreFrames) = synchronized(audioRingBufferLock) {
+            Pair(
+                audioRingBuffer.map { it.copyOf() },
+                audioScoreRingBuffer.map { HashMap(it) }
+            )
+        }
+        if (frames.isEmpty() || scoreFrames.isEmpty() || frames.size != scoreFrames.size) {
+            Timber.w(
+                "OWW boundary fallback wake='%s' reason=ring_invalid frames=%d scoreFrames=%d",
+                detection.wakeWord,
+                frames.size,
+                scoreFrames.size
+            )
+            return flattenAudioRingBufferTail(speakerVerificationWindowMs)
+        }
+
+        val wakeName = detection.wakeWord
+        val wakeScores = FloatArray(frames.size)
+        var peakIdx = -1
+        var peakScore = Float.NEGATIVE_INFINITY
+        for (i in frames.indices) {
+            val score = scoreFrames[i][wakeName] ?: 0f
+            wakeScores[i] = score
+            if (score > peakScore) {
+                peakScore = score
+                peakIdx = i
+            }
+        }
+
+        if (peakIdx < 0 || peakScore <= 0f) {
+            Timber.w(
+                "OWW boundary fallback wake='%s' reason=no_peak peakIdx=%d peakScore=%.4f",
+                detection.wakeWord,
+                peakIdx,
+                peakScore
+            )
+            return flattenAudioRingBufferTail(speakerVerificationWindowMs)
+        }
+
+        // OWW-score bounded phrase extraction + small fixed padding.
+        // Anchor on the last strong frame and walk backward for onset.
+        // No RMS/silence logic (works in noisy rooms).
+        val boundary = (peakScore * 0.25f).coerceAtLeast(0.08f)
+        var lastStrongIdx = -1
+        for (i in wakeScores.lastIndex downTo 0) {
+            if (wakeScores[i] >= boundary) {
+                lastStrongIdx = i
+                break
+            }
+        }
+        if (lastStrongIdx < 0) {
+            Timber.w(
+                "OWW boundary fallback wake='%s' reason=no_last_strong peakIdx=%d peakScore=%.4f boundary=%.4f",
+                detection.wakeWord,
+                peakIdx,
+                peakScore,
+                boundary
+            )
+            return flattenAudioRingBufferTail(speakerVerificationWindowMs)
+        }
+
+        var startIdx = lastStrongIdx
+        var endIdx = lastStrongIdx
+
+        while (startIdx > 0 && (wakeScores[startIdx - 1] >= boundary)) {
+            startIdx--
+        }
+
+        // User-tuned nudge: include one extra frame before phrase start.
+        if (startIdx > 0) {
+            startIdx--
+        }
+
+        // Bias toward keeping phrase start: larger pre-roll, smaller tail.
+        val prePadSamples = (config.sampleRate * 500) / 1000
+        val postPadSamples = (config.sampleRate * 40) / 1000
+        val minSamples = (config.sampleRate * 450) / 1000
+        // Honor configured verification window cap instead of hard 900ms.
+        val maxSamples = (config.sampleRate * speakerVerificationWindowMs) / 1000
+
+        fun sampleCount(from: Int, to: Int): Int {
+            var total = 0
+            for (i in from..to) total += frames[i].size
+            return total
+        }
+
+        var addedPre = 0
+        while (startIdx > 0 && addedPre < prePadSamples) {
+            startIdx--
+            addedPre += frames[startIdx].size
+        }
+
+        var addedPost = 0
+        while (endIdx < frames.lastIndex && addedPost < postPadSamples) {
+            endIdx++
+            addedPost += frames[endIdx].size
+        }
+
+        while (sampleCount(startIdx, endIdx) < minSamples && (startIdx > 0 || endIdx < frames.lastIndex)) {
+            if (startIdx > 0) startIdx--
+            if (sampleCount(startIdx, endIdx) < minSamples && endIdx < frames.lastIndex) endIdx++
+        }
+
+        // If we must shrink, trim trailing side first to avoid clipping phrase onset.
+        while (sampleCount(startIdx, endIdx) > maxSamples && (startIdx < lastStrongIdx || endIdx > lastStrongIdx)) {
+            if (endIdx > lastStrongIdx) {
+                endIdx--
+            } else if (startIdx < lastStrongIdx) {
+                startIdx++
+            } else {
+                break
+            }
+        }
+
+        val selected = ArrayList<FloatArray>(endIdx - startIdx + 1)
+        for (i in startIdx..endIdx) selected.add(frames[i])
+        if (selected.isEmpty()) {
+            Timber.w(
+                "OWW boundary fallback wake='%s' reason=empty_selection peakIdx=%d boundary=%.4f",
+                detection.wakeWord,
+                peakIdx,
+                boundary
+            )
+            return flattenAudioRingBufferTail(speakerVerificationWindowMs)
+        }
+
+        val flattened = flattenFrames(selected)
+        val selectedMs = if (config.sampleRate > 0) {
+            (flattened.size.toDouble() * 1000.0 / config.sampleRate.toDouble())
+        } else 0.0
+
+        val scoreLogStart = maxOf(0, wakeScores.size - 21)
+        val scoreLog = (scoreLogStart until wakeScores.size)
+            .joinToString(separator = ",") { i -> "$i:${"%.3f".format(wakeScores[i])}" }
+
+        Timber.i(
+            "OWW boundary debug wake='%s' peakScore=%.4f peakIdx=%d lastStrongIdx=%d boundary=%.4f startIdx=%d endIdx=%d frames=%d selectedSamples=%d selectedMs=%.1f scores=[%s]",
+            detection.wakeWord,
+            peakScore,
+            peakIdx,
+            lastStrongIdx,
+            boundary,
+            startIdx,
+            endIdx,
+            frames.size,
+            flattened.size,
+            selectedMs,
+            scoreLog
+        )
+
+        return flattened
+    }
+
+    private fun queueWakeClipWavDump(detection: WakeWordDetection, audio: FloatArray) {
+        if (audio.isEmpty()) return
+        val copy = audio.copyOf()
+        wakeClipDumpScope.launch {
+            dumpWakeClipWav(detection, copy)
+        }
+    }
+
+    private fun queueEnrollmentWavDump(utterances: List<FloatArray>, wakeWord: String) {
+        if (utterances.isEmpty()) return
+        val copies = utterances.map { it.copyOf() }
+        val wakeLabel = wakeWord
+            .lowercase()
+            .replace(Regex("[^a-z0-9._-]+"), "_")
+            .trim('_')
+            .ifEmpty { "wake" }
+        wakeClipDumpScope.launch {
+            dumpEnrollmentWav(wakeLabel, copies)
+        }
+    }
+
+    private fun dumpEnrollmentWav(wakeLabel: String, utterances: List<FloatArray>) {
+        if (utterances.isEmpty()) return
+        runCatching {
+            val dir = resolveWakeClipDirectory()
+            val ts = System.currentTimeMillis()
+            val merged = flattenFrames(utterances)
+            val mergedFile = File(dir, "enroll_${wakeLabel}_${ts}_all${utterances.size}.wav")
+            writePcm16Wav(mergedFile, merged, config.sampleRate)
+
+            utterances.forEachIndexed { idx, utterance ->
+                val file = File(dir, "enroll_${wakeLabel}_${ts}_u${idx + 1}.wav")
+                writePcm16Wav(file, utterance, config.sampleRate)
+            }
+
+            val mergedMs = if (config.sampleRate > 0) {
+                (merged.size.toDouble() * 1000.0 / config.sampleRate.toDouble()).toInt()
+            } else 0
+            Timber.i(
+                "Saved enrollment wavs base=%s merged_samples=%d merged_ms=%d utterances=%d",
+                "enroll_${wakeLabel}_${ts}",
+                merged.size,
+                mergedMs,
+                utterances.size
+            )
+        }.onFailure { t ->
+            Timber.w(t, "Failed to save enrollment wavs")
+        }
+    }
+
+    private fun dumpWakeClipWav(detection: WakeWordDetection, audio: FloatArray) {
+        if (audio.isEmpty()) return
+        runCatching {
+            val dir = resolveWakeClipDirectory()
+
+            trimWakeClipHistory(dir, maxFiles = 60)
+
+            val safeWake = detection.wakeWord
+                .lowercase()
+                .replace(Regex("[^a-z0-9._-]+"), "_")
+                .trim('_')
+                .ifEmpty { "wake" }
+            val ts = System.currentTimeMillis()
+            val file = File(
+                dir,
+                "wake_${safeWake}_${ts}_score_${"%.3f".format(detection.score)}.wav"
+            )
+            writePcm16Wav(file, audio, config.sampleRate)
+            Timber.i(
+                "Saved wake clip wav path=%s samples=%d ms=%d",
+                file.absolutePath,
+                audio.size,
+                ((audio.size.toFloat() / config.sampleRate.toFloat()) * 1000f).toInt()
+            )
+        }.onFailure { t ->
+            Timber.w(t, "Failed to save wake clip wav")
+        }
+    }
+
+    private fun resolveWakeClipDirectory(): File {
+        // Preferred: public Downloads so files are easy to grab over adb/file manager.
+        @Suppress("DEPRECATION")
+        val publicDownloads = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "vaca-wake-clips"
+        )
+        if (ensureDirectory(publicDownloads)) {
+            return publicDownloads
+        }
+
+        // Fallback: app-scoped external downloads.
+        val externalBase = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        if (externalBase != null) {
+            val appExternalDownloads = File(externalBase, "wake-clips")
+            if (ensureDirectory(appExternalDownloads)) {
+                return appExternalDownloads
+            }
+        }
+
+        // Final fallback: app private files dir.
+        val privateDir = File(context.filesDir, "wake-clips")
+        ensureDirectory(privateDir)
+        return privateDir
+    }
+
+    private fun ensureDirectory(dir: File): Boolean {
+        return runCatching {
+            if (!dir.exists()) {
+                dir.mkdirs()
+            }
+            dir.exists() && dir.isDirectory
+        }.getOrElse { false }
+    }
+
+    private fun trimWakeClipHistory(dir: File, maxFiles: Int) {
+        val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".wav", ignoreCase = true) } ?: return
+        if (files.size <= maxFiles) return
+        files.sortedBy { it.lastModified() }
+            .take(files.size - maxFiles)
+            .forEach { runCatching { it.delete() } }
+    }
+
+    private fun writePcm16Wav(file: File, audio: FloatArray, sampleRate: Int) {
+        val numChannels = 1
+        val bitsPerSample = 16
+        val bytesPerSample = bitsPerSample / 8
+        val dataSize = audio.size * bytesPerSample
+        val byteRate = sampleRate * numChannels * bytesPerSample
+        val blockAlign = numChannels * bytesPerSample
+        val chunkSize = 36 + dataSize
+
+        FileOutputStream(file).use { fos ->
+            fun writeAscii(value: String) {
+                fos.write(value.toByteArray(Charsets.US_ASCII))
+            }
+            fun writeIntLE(value: Int) {
+                fos.write(value and 0xFF)
+                fos.write((value ushr 8) and 0xFF)
+                fos.write((value ushr 16) and 0xFF)
+                fos.write((value ushr 24) and 0xFF)
+            }
+            fun writeShortLE(value: Int) {
+                fos.write(value and 0xFF)
+                fos.write((value ushr 8) and 0xFF)
+            }
+
+            writeAscii("RIFF")
+            writeIntLE(chunkSize)
+            writeAscii("WAVE")
+            writeAscii("fmt ")
+            writeIntLE(16) // PCM header size
+            writeShortLE(1) // PCM format
+            writeShortLE(numChannels)
+            writeIntLE(sampleRate)
+            writeIntLE(byteRate)
+            writeShortLE(blockAlign)
+            writeShortLE(bitsPerSample)
+            writeAscii("data")
+            writeIntLE(dataSize)
+
+            audio.forEach { sample ->
+                val pcm = (sample.coerceIn(-1f, 1f) * Short.MAX_VALUE)
+                    .toInt()
+                    .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                writeShortLE(pcm and 0xFFFF)
+            }
+        }
     }
 
     private fun maybeEnableSpeakerVerificationFromExistingEnrollment() {
@@ -925,6 +1279,7 @@ class OpenWakeWordEngine(
      */
     override fun release() {
         stop()
+        wakeClipDumpScope.cancel()
         runCatching { speakerVerifier?.close() }
         speakerVerifier = null
         speakerVerifierSignature = null
