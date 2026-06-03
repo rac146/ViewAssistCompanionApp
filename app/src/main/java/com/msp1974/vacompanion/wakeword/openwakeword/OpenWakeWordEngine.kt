@@ -257,7 +257,7 @@ class OpenWakeWordEngine(
                                     emit(AudioResult.WakeDetected(detection))
                                 } else {
                                     Timber.i(
-                                        "OWW trigger rejected by speaker verification wake='%s' score=%.4f ts=%d",
+                                        "OWW FALSE_POSITIVE_BLOCKED trigger rejected by speaker verification wake='%s' score=%.4f ts=%d",
                                         detection.wakeWord,
                                         detection.score,
                                         detection.timestamp
