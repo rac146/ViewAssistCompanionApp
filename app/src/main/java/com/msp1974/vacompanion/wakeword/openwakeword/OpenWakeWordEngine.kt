@@ -450,9 +450,9 @@ class OpenWakeWordEngine(
             return
         }
 
-        enrollmentState = SpeakerEnrollmentState(targetSamples = 5)
+        enrollmentState = SpeakerEnrollmentState(targetSamples = 10)
         armEnrollmentForNextSample()
-        toast("Speaker enrollment started. Wait for beep, then say '${config.wakeWord}' clearly 5 times.")
+        toast("Speaker enrollment started. Wait for beep, then say '${config.wakeWord}' clearly 10 times.")
     }
 
     private fun processEnrollmentAudio(frame: FloatArray) {
