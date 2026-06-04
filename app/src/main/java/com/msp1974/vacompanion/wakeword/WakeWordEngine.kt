@@ -122,44 +122,40 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
     fun start() = flow {
         engineInstance = get()
         if (engineInstance != null) {
-            try {
-                engineInstance!!.start()!!.collect {
-                    when (it) {
-                        is WakeWordEngineProvider.AudioResult.WakeDetected -> {
-                            val detectInfo = WakeWordEngineProvider.WakeWordDetection(
-                                it.detection.wakeWordId,
-                                it.detection.wakeWord,
-                                it.detection.score >= config.wakeWordThreshold,
-                                it.detection.score.round(2)
-                            )
-                            emit(WakeWordEngineProvider.AudioResult.WakeDetected(detectInfo))
-                        }
+            engineInstance!!.start()!!.collect {
+                when (it) {
+                    is WakeWordEngineProvider.AudioResult.WakeDetected -> {
+                        val detectInfo = WakeWordEngineProvider.WakeWordDetection(
+                            it.detection.wakeWordId,
+                            it.detection.wakeWord,
+                            it.detection.score >= config.wakeWordThreshold,
+                            it.detection.score.round(2)
+                        )
+                        emit(WakeWordEngineProvider.AudioResult.WakeDetected(detectInfo))
+                    }
 
-                        is WakeWordEngineProvider.AudioResult.StopDetected -> {
-                            val detectInfo = WakeWordEngineProvider.WakeWordDetection(
-                                it.detection.wakeWordId,
-                                it.detection.wakeWord,
-                                it.detection.score >= config.wakeWordThreshold,
-                                it.detection.score.round(2)
-                            )
-                            emit(WakeWordEngineProvider.AudioResult.StopDetected(detectInfo))
-                        }
+                    is WakeWordEngineProvider.AudioResult.StopDetected -> {
+                        val detectInfo = WakeWordEngineProvider.WakeWordDetection(
+                            it.detection.wakeWordId,
+                            it.detection.wakeWord,
+                            it.detection.score >= config.wakeWordThreshold,
+                            it.detection.score.round(2)
+                        )
+                        emit(WakeWordEngineProvider.AudioResult.StopDetected(detectInfo))
+                    }
 
-                        is WakeWordEngineProvider.AudioResult.Audio -> {
-                            emit(it)
-                        }
+                    is WakeWordEngineProvider.AudioResult.Audio -> {
+                        emit(it)
+                    }
 
-                        is WakeWordEngineProvider.AudioResult.AudioLevel -> {
-                            emit(it)
-                        }
+                    is WakeWordEngineProvider.AudioResult.AudioLevel -> {
+                        emit(it)
+                    }
 
-                        is WakeWordEngineProvider.AudioResult.EngineStatus -> {
-                            emit(it)
-                        }
+                    is WakeWordEngineProvider.AudioResult.EngineStatus -> {
+                        emit(it)
                     }
                 }
-            } finally {
-                emit(WakeWordEngineProvider.AudioResult.EngineStatus("Stopped"))
             }
         }
     }

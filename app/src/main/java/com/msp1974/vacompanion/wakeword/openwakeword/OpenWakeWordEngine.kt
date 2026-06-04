@@ -859,8 +859,22 @@ class OpenWakeWordEngine(
         var startIdx = lastStrongIdx
         var endIdx = lastStrongIdx
 
-        while (startIdx > 0 && (wakeScores[startIdx - 1] >= boundary)) {
-            startIdx--
+        // Gap-tolerant backtracking:
+        // allow short score dips inside a single wake phrase (common in noisy frames).
+        // This keeps phrase onset from being clipped when one frame drops under boundary.
+        val maxBacktrackGapFrames = 2
+        var remainingGapFrames = maxBacktrackGapFrames
+        while (startIdx > 0) {
+            val prevScore = wakeScores[startIdx - 1]
+            if (prevScore >= boundary) {
+                startIdx--
+                remainingGapFrames = maxBacktrackGapFrames
+            } else if (remainingGapFrames > 0) {
+                startIdx--
+                remainingGapFrames--
+            } else {
+                break
+            }
         }
 
         // User-tuned nudge: include one extra frame before phrase start.
