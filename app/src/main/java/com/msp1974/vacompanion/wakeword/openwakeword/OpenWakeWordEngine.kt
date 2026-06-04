@@ -245,6 +245,7 @@ class OpenWakeWordEngine(
                                     detection.score,
                                     detection.timestamp
                                 )
+                                playPreValidationBeep()
                                 // Capture one extra frame after detection so the ring buffer
                                 // includes a small post-trigger context window.
                                 val paddingAudio = microphoneInput.readFloat()
@@ -530,6 +531,17 @@ class OpenWakeWordEngine(
             val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 85)
             try {
                 tone.startTone(ToneGenerator.TONE_PROP_BEEP, 140)
+            } finally {
+                tone.release()
+            }
+        }
+    }
+
+    private fun playPreValidationBeep() {
+        runCatching {
+            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 80)
+            try {
+                tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 70)
             } finally {
                 tone.release()
             }
