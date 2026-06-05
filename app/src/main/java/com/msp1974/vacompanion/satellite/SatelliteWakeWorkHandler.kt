@@ -12,6 +12,7 @@ import com.msp1974.vacompanion.wakeword.WakeWordEngineProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.cancellable
@@ -128,59 +129,71 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
 
         //sendDiagnostics(0f, 0f)
         val flow = engine!!.start()
-        wakeWordJob = scope.launch { flow.cancellable().collect {
-            when (it) {
-                is WakeWordEngineProvider.AudioResult.WakeDetected -> {
-                    holdLastDetectionLevel(it.detection.score)
-                    if (it.detection.score >= config.wakeWordThreshold) {
-                        val now = System.currentTimeMillis()
-                        val lastDetection = detectionCooldowns[it.detection.wakeWordId]
+        wakeWordJob = scope.launch {
+            flow.cancellable().collect {
+                when (it) {
+                    is WakeWordEngineProvider.AudioResult.WakeDetected -> {
+                        holdLastDetectionLevel(it.detection.score)
+                        if (it.detection.score >= config.wakeWordThreshold) {
+                            val now = System.currentTimeMillis()
+                            val lastDetection = detectionCooldowns[it.detection.wakeWordId]
 
-                        if (lastDetection == null || detectionCooldownMs == 0L || now - lastDetection >= detectionCooldownMs) {
-                            Timber.i("Wake word detected: ${it.detection.wakeWord}")
-                            wakeWordDetected(it.detection, engine!!.isStreaming())
-                            detectionCooldowns[it.detection.wakeWordId] = now
+                            if (lastDetection == null || detectionCooldownMs == 0L || now - lastDetection >= detectionCooldownMs) {
+                                Timber.i("Wake word detected: ${it.detection.wakeWord}")
+                                wakeWordDetected(it.detection, engine!!.isStreaming())
+                                detectionCooldowns[it.detection.wakeWordId] = now
+                            }
+                        }
+                    }
+
+                    is WakeWordEngineProvider.AudioResult.StopDetected -> {
+                        if (it.detection.detected) {
+                            Timber.d("Stop word detected: score: ${it.detection.score}")
+                            if (it.detection.score > 0.5) {
+                                onStopWordDetected(it.detection)
+                                BroadcastSender.sendBroadcast(
+                                    context,
+                                    BroadcastSender.STOP_WORD_DETECTED
+                                )
+                            }
+                        }
+                    }
+
+                    is WakeWordEngineProvider.AudioResult.Audio -> {
+                        if (it.audio.size() > 0) {
+                            if (engine!!.isStreaming()) {
+                                onAudio(it)
+                            }
+                        }
+                    }
+
+                    is WakeWordEngineProvider.AudioResult.AudioLevel -> {
+                        if (config.diagnosticsEnabled) {
+                            onDiagnostics(it.level, lastWakeWordDetectionScore)
+                        }
+                    }
+                    is WakeWordEngineProvider.AudioResult.EngineStatus -> {
+                        Timber.i("Engine status: ${it.status}")
+                        if (it.status == "Started") {
+                            state = WakeWordHandlerState.RUNNING
+                        } else if (it.status == "Stopped") {
+                            state = WakeWordHandlerState.STOPPED
                         }
                     }
                 }
-
-                is WakeWordEngineProvider.AudioResult.StopDetected -> {
-                    if (it.detection.detected) {
-                        Timber.d("Stop word detected: score: ${it.detection.score}")
-                        if (it.detection.score > 0.5) {
-                            onStopWordDetected(it.detection)
-                            BroadcastSender.sendBroadcast(
-                                context,
-                                BroadcastSender.STOP_WORD_DETECTED
-                            )
-                        }
-                    }
-                }
-
-                is WakeWordEngineProvider.AudioResult.Audio -> {
-                    if (it.audio.size() > 0) {
-                        if (engine!!.isStreaming()) {
-                            onAudio(it)
-                        }
-                    }
-                }
-
-                is WakeWordEngineProvider.AudioResult.AudioLevel -> {
-                    if (config.diagnosticsEnabled) {
-                        onDiagnostics(it.level, lastWakeWordDetectionScore)
-                    }
-                }
-                is WakeWordEngineProvider.AudioResult.EngineStatus -> {
-                    Timber.i("Engine status: ${it.status}")
-                    if (it.status == "Started") {
-                        state = WakeWordHandlerState.RUNNING
-                    } else if (it.status == "Stopped") {
-                        state = WakeWordHandlerState.STOPPED
-                    }
-                }
-
             }
-        }}
+        }.apply {
+            invokeOnCompletion { cause ->
+                when {
+                    cause == null -> Timber.i("Wake word detection collector completed")
+                    cause is CancellationException -> Timber.i("Wake word detection collector cancelled")
+                    else -> Timber.e(cause, "Wake word detection collector failed")
+                }
+                if (state != WakeWordHandlerState.STOPPED) {
+                    state = WakeWordHandlerState.STOPPED
+                }
+            }
+        }
     }
 
     fun terminateWakeWordDetection() {

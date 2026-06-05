@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.yield
 import timber.log.Timber
 import kotlin.collections.plus
@@ -125,7 +126,11 @@ open class MicroWakeWordEngine (
                 Timber.i("Stopping MicroWakeWordEngine")
                 microphoneInput.close()
                 detector?.close()
-                emit(AudioResult.EngineStatus("Stopped"))
+                Timber.i("MicroWakeWordEngine stopped")
+            }
+        }.onCompletion { cause ->
+            if (cause != null && cause !is kotlinx.coroutines.CancellationException) {
+                Timber.w(cause, "MicroWakeWordEngine completed with failure")
             }
         }
     }

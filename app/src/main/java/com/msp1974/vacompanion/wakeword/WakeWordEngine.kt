@@ -9,7 +9,9 @@ import com.msp1974.vacompanion.wakeword.microwakeword.providers.AssetWakeWordPro
 import com.msp1974.vacompanion.wakeword.openwakeword.OpenWakeWordEngine
 import com.msp1974.vacompanion.wakeword.openwakeword.model.WakeWordDetection
 import com.msp1974.vacompanion.wakeword.openwakeword.model.WakeWordModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.onCompletion
 import timber.log.Timber
 
 data class WakeWord(val name: String, val fileName: String, val builtIn: Boolean = true)
@@ -157,6 +159,12 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
                     }
                 }
             }
+        }
+    }.onCompletion { cause ->
+        if (cause == null) {
+            emit(WakeWordEngineProvider.AudioResult.EngineStatus("Stopped"))
+        } else if (cause !is CancellationException) {
+            Timber.w(cause, "WakeWordEngine completed with failure")
         }
     }
 }

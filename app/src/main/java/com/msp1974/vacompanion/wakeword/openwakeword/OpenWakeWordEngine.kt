@@ -275,7 +275,11 @@ class OpenWakeWordEngine(
                 Timber.e("Runtime exception thrown by wake word engine: $e")
             } finally {
                 microphoneInput.close()
-                emit(AudioResult.EngineStatus("Stopped"))
+                Timber.i("OpenWakeWordEngine stopped")
+            }
+        }.onCompletion { cause ->
+            if (cause != null && cause !is CancellationException) {
+                Timber.w(cause, "OpenWakeWordEngine completed with failure")
             }
         }
     }
