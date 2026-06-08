@@ -171,6 +171,7 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
     }
 
     fun start() = flow {
+        maybeEnableSpeakerVerificationFromExistingEnrollment()
         engineInstance = get()
         synchronized(verificationRingBufferLock) {
             verificationRingBuffer.clear()
@@ -204,13 +205,13 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
                                 )
                                 return@collect
                             }
-                            playPreVerificationBeep()
 
                             if (sharedVerifier == null && config.speakerVerificationEnabled) {
                                 sharedVerifier = createSharedVerifierIfEnabled()
                             }
                             val verifier = sharedVerifier
                             if (verifier != null && verifier.isReady) {
+                                playPreVerificationBeep()
                                 val verificationAudio = extractVerificationAudio(rawDetected)
                                 if (verificationAudio.isNotEmpty()) {
                                     queueVerificationClipWavDump(rawDetected, verificationAudio)
@@ -315,6 +316,7 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
     }
 
     private fun createSharedVerifierIfEnabled(): SherpaSpeakerVerifier? {
+        maybeEnableSpeakerVerificationFromExistingEnrollment()
         if (!config.speakerVerificationEnabled) return null
         return SherpaSpeakerVerifier(context, config).also {
             if (!it.isReady) {
@@ -326,6 +328,38 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
                 )
             }
         }
+    }
+
+    private fun maybeEnableSpeakerVerificationFromExistingEnrollment() {
+        if (config.speakerVerificationEnabled) return
+        if (!hasSpeakerModelConfigured()) return
+
+        val existingEmbeddingPath = resolveExistingEnrollmentPath() ?: return
+        if (config.speakerVerificationEmbeddingPath.trim().isEmpty()) {
+            config.speakerVerificationEmbeddingPath = existingEmbeddingPath
+        }
+        config.speakerVerificationEnabled = true
+        Timber.i("Auto-enabled speaker verification from existing enrollment: %s", existingEmbeddingPath)
+    }
+
+    private fun resolveExistingEnrollmentPath(): String? {
+        val configured = config.speakerVerificationEmbeddingPath.trim()
+        if (configured.isNotEmpty() && File(configured).exists()) {
+            return configured
+        }
+
+        val defaultPath = File(context.filesDir, "speaker/enrolled_embedding.txt")
+        return if (defaultPath.exists()) defaultPath.absolutePath else null
+    }
+
+    private fun hasSpeakerModelConfigured(): Boolean {
+        val modelPath = config.speakerVerificationModelPath.trim()
+        if (modelPath.isEmpty()) return false
+        if (File(modelPath).exists()) return true
+        return runCatching {
+            context.assets.open(modelPath).use { }
+            true
+        }.getOrElse { false }
     }
 
     private fun extractVerificationAudio(detection: WakeWordEngineProvider.WakeWordDetection): FloatArray {
