@@ -134,7 +134,7 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
                 when (it) {
                     is WakeWordEngineProvider.AudioResult.WakeDetected -> {
                         holdLastDetectionLevel(it.detection.score)
-                        if (it.detection.score >= config.wakeWordThreshold) {
+                        if (it.detection.detected) {
                             val now = System.currentTimeMillis()
                             val lastDetection = detectionCooldowns[it.detection.wakeWordId]
 
@@ -142,6 +142,13 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
                                 Timber.i("Wake word detected: ${it.detection.wakeWord}")
                                 wakeWordDetected(it.detection, engine!!.isStreaming())
                                 detectionCooldowns[it.detection.wakeWordId] = now
+                            } else {
+                                Timber.i(
+                                    "Wake word suppressed by handler cooldown wake='%s' cooldownMs=%d sinceLastMs=%d",
+                                    it.detection.wakeWord,
+                                    detectionCooldownMs,
+                                    now - lastDetection
+                                )
                             }
                         }
                     }
