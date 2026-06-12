@@ -17,7 +17,7 @@ class WebRtcApmProcessor(
     private val postGain: Float = 1.0f,
     private val vadEnabled: Boolean = true,
     private val vadMode: Int = 3,
-    private val nonSpeechGain: Float = 0.45f,
+    private val nonSpeechGain: Float = 0.7f,
     private val speechHangoverFrames: Int = 3,
 ) : AutoCloseable {
     private val native = NativeWebRtcApm()
@@ -192,4 +192,3 @@ class WebRtcApmProcessor(
         pendingSize = 0
     }
 }
-
