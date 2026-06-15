@@ -1,8 +1,10 @@
 package com.msp1974.vacompanion.device
 
+import android.app.Activity
 import android.app.admin.DevicePolicyManager
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
@@ -16,6 +18,12 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.utils.FirebaseManager
 import com.msp1974.vacompanion.utils.Logger
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
+
+enum class ScreenOnMode {
+    ON, ON_DARK, OFF
+}
 
 class ScreenUtils (val context: Context, val config: APPConfig) : ContextWrapper(context) {
     var log = Logger()
@@ -26,6 +34,63 @@ class ScreenUtils (val context: Context, val config: APPConfig) : ContextWrapper
 
     init {
         initBrightness = getScreenBrightness()
+    }
+
+    suspend fun setScreenMode(mode: ScreenOnMode, window: Window, isDeviceAdmin: Boolean, setOverlay: (Boolean) -> Unit) {
+        log.i("ScreenUtils - Setting screen mode: $mode")
+        when (mode) {
+            ScreenOnMode.ON -> {
+                setOverlay(false)
+                setScreenAlwaysOn(window, config.screenAlwaysOn)
+                setScreenAutoBrightness(window, config.screenAutoBrightness)
+                setScreenBrightness(window, config.screenBrightness)
+                setScreenTimeout(config.screenTimeout)
+                wakeScreen()
+            }
+            ScreenOnMode.ON_DARK -> {
+                setOverlay(true)
+                setScreenAlwaysOn(window, true)
+                setScreenAutoBrightness(window, false)
+                setScreenBrightness(window, 0.01f)
+                wakeScreen()
+            }
+            ScreenOnMode.OFF -> {
+                if (isDeviceAdmin) {
+                    setPartialWakeLock()
+                    lockScreen()
+                } else {
+                    log.d("Simulating screen off via timeout and black overlay")
+                    try {
+                        setPartialWakeLock()
+                        setScreenAlwaysOn(window, false)
+                        setScreenAutoBrightness(window, false)
+                        setScreenBrightness(window, 0.01f)
+                        setOverlay(true)
+
+                        if (setScreenTimeout(1000)) {
+                            // Wait up to 15 seconds for the screen to actually turn off
+                            delay(1000) // Give it a second to start dimming
+                            withTimeout(15000) {
+                                while (!isScreenOff()) {
+                                    delay(200)
+                                }
+                            }
+                            log.d("Screen verified as OFF")
+                        }
+                    } catch (e: Exception) {
+                        log.w("Simulated sleep interrupted or timed out: $e")
+                    } finally {
+                        // Restore original values so the next wake event is clean
+                        // Doing this while the screen is off prevents the "1 second turn off"
+                        // from happening immediately on the next wake.
+                        setScreenTimeout(config.screenTimeout)
+                        setScreenBrightness(window, config.screenBrightness)
+                        setOverlay(false)
+                        log.d("Screen settings restored for next wake")
+                    }
+                }
+            }
+        }
     }
 
     fun getScreenBrightness(): Float {
@@ -124,8 +189,30 @@ class ScreenUtils (val context: Context, val config: APPConfig) : ContextWrapper
         }
     }
 
+    fun setScreenOrientation(activity: Activity, mode: String) {
+        when (mode) {
+            "auto" ->  activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
+            "portrait" -> activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
+            "landscape" -> activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
+            "reverse_portrait" -> activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT)
+            "reverse_landscape" -> activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE)
+        }
+    }
+
     fun wakeScreen(lockDuration: Long = 5000) {
         log.d("Acquiring screen on wake lock")
+        
+        // Activity-level wake flags
+        (context as? android.app.Activity)?.let { activity ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                activity.setTurnScreenOn(true)
+                activity.setShowWhenLocked(true)
+            } else {
+                activity.window?.addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
+                activity.window?.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
+            }
+        }
+
         if (wakeLock != null && wakeLock!!.isHeld) {
             wakeLock!!.release()
         }
@@ -161,15 +248,6 @@ class ScreenUtils (val context: Context, val config: APPConfig) : ContextWrapper
     fun isScreenOn(): Boolean {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         return pm.isInteractive
-    }
-
-    fun isScreenOn2(): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            return display.state == Display.STATE_ON
-        } else {
-            val wm = getSystemService(WINDOW_SERVICE) as WindowManager
-            return wm.defaultDisplay.state == Display.STATE_ON
-        }
     }
 
     fun isScreenOff(): Boolean {

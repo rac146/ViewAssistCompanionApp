@@ -9,11 +9,14 @@ import android.provider.Settings.Secure
 import androidx.preference.PreferenceManager
 import androidx.core.content.edit
 import com.google.android.gms.common.util.ClientLibraryUtils.getPackageInfo
+import com.msp1974.vacompanion.data.AvailableAlarm
+import com.msp1974.vacompanion.data.AvailableWakeSound
 import com.msp1974.vacompanion.utils.Event
 import com.msp1974.vacompanion.utils.EventNotifier
 import com.msp1974.vacompanion.utils.FirebaseManager
 import com.msp1974.vacompanion.utils.Helpers.Companion.round
 import com.msp1974.vacompanion.utils.Logger
+import com.msp1974.vacompanion.wakeword.AvailableWakeWordsType
 import kotlinx.serialization.json.*
 import java.util.UUID
 import javax.inject.Inject
@@ -33,6 +36,7 @@ enum class PageLoadingStage {
     AUTHORISED,
     LOADED,
     AUTH_FAILED,
+    AUTH_REQUIRED,
     ERROR
 }
 
@@ -76,6 +80,7 @@ class APPConfig @Inject constructor(val context: Context) {
     var backgroundTaskRunning: Boolean = false
     var backgroundTaskStatus: BackgroundTaskStatus = BackgroundTaskStatus.NOT_STARTED
     var isRunning: Boolean = false
+    var cameraStreamActive: Boolean = false
 
     var hasRecordAudioPermission: Boolean = false
     var hasPostNotificationPermission: Boolean = false
@@ -83,6 +88,10 @@ class APPConfig @Inject constructor(val context: Context) {
     var hasCameraPermission: Boolean = false
 
     var ignoreSSLErrors: Boolean = alwaysIgnoreSSLErrors
+
+    var availableWakeWords: AvailableWakeWordsType? = null
+    var availableWakeSounds: List<AvailableWakeSound> = emptyList()
+    var availableAlarms: List<AvailableAlarm> = emptyList()
 
     //In memory settings with change notification
     var useAdvancedGain: Boolean by Delegates.observable(false) { property, oldValue, newValue ->
@@ -98,6 +107,10 @@ class APPConfig @Inject constructor(val context: Context) {
     }
 
     var wakeWordSound: String by Delegates.observable(DEFAULT_WAKE_WORD_SOUND) { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
+    var alarmSound: String by Delegates.observable(DEFAULT_ALARM_SOUND) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
 
@@ -181,10 +194,6 @@ class APPConfig @Inject constructor(val context: Context) {
         onValueChangedListener(property, oldValue, newValue)
     }
 
-    var swipeRefresh: Boolean by Delegates.observable(DEFAULT_SWIPE_REFRESH) { property, oldValue, newValue ->
-        onValueChangedListener(property, oldValue, newValue)
-    }
-
     var screenAlwaysOn: Boolean by Delegates.observable(false) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
@@ -242,6 +251,10 @@ class APPConfig @Inject constructor(val context: Context) {
         onValueChangedListener(property, oldValue, newValue)
     }
 
+    var motionDetectionMode: String by Delegates.observable("none") { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue) // or motion
+    }
+
     var motionDetectionSensitivity: Int by Delegates.observable(0) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
@@ -271,6 +284,10 @@ class APPConfig @Inject constructor(val context: Context) {
     }
 
     var screenOrientationMode: String by Delegates.observable("auto") { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
+    var enableQuickActions: Boolean by Delegates.observable(true) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
 
@@ -330,6 +347,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["wake_word_engine"]?.jsonPrimitive?.contentOrNull?.let { wakeWordEngine = it }
         settings["wake_word"]?.jsonPrimitive?.contentOrNull?.let { wakeWord = it }
         settings["wake_word_sound"]?.jsonPrimitive?.contentOrNull?.let { wakeWordSound = it }
+        settings["alarm_sound"]?.jsonPrimitive?.contentOrNull?.let { alarmSound = it }
         settings["wake_word_threshold"]?.jsonPrimitive?.floatOrNull?.let { wakeWordThreshold = (it / 10).round(2) }
         settings["raw_proximity_threshold"]?.jsonPrimitive?.intOrNull?.let { rawProximitySensorThreshold = it }
         settings["notification_volume"]?.jsonPrimitive?.floatOrNull?.let { notificationVolume = it.toInt() }
@@ -339,7 +357,6 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["mute"]?.jsonPrimitive?.booleanOrNull?.let { isMuted = it }
         settings["screen_brightness"]?.jsonPrimitive?.floatOrNull?.let { screenBrightness = it / 100 }
         settings["screen_auto_brightness"]?.jsonPrimitive?.booleanOrNull?.let { screenAutoBrightness = it }
-        settings["swipe_refresh"]?.jsonPrimitive?.booleanOrNull?.let { swipeRefresh = it }
         settings["screen_always_on"]?.jsonPrimitive?.booleanOrNull?.let { screenAlwaysOn = it }
         settings["do_not_disturb"]?.jsonPrimitive?.booleanOrNull?.let { doNotDisturb = it }
         settings["dark_mode"]?.jsonPrimitive?.booleanOrNull?.let { darkMode = it }
@@ -354,7 +371,10 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["screen_on_motion"]?.jsonPrimitive?.booleanOrNull?.let { screenOnMotion = it }
         settings["screen_on"]?.jsonPrimitive?.booleanOrNull?.let { screenOn = it }
         settings["enable_network_recovery"]?.jsonPrimitive?.booleanOrNull?.let { enableNetworkRecovery = it }
-        settings["enable_motion_detection"]?.jsonPrimitive?.booleanOrNull?.let { enableMotionDetection = it }
+        settings["motion_detection_mode"]?.jsonPrimitive?.contentOrNull?.let {
+            motionDetectionMode = it
+            enableMotionDetection = it != "none"
+        }
         settings["motion_detection_sensitivity"]?.jsonPrimitive?.intOrNull?.let { motionDetectionSensitivity = it }
         settings["screen_timeout"]?.jsonPrimitive?.intOrNull?.let { screenTimeout = it * 1000 }
         settings["bump_sensitivity"]?.jsonPrimitive?.floatOrNull?.let { bumpSensitivity = it / 10 }
@@ -375,6 +395,7 @@ class APPConfig @Inject constructor(val context: Context) {
                 experimentalAudioBackend = AUDIO_BACKEND_WEBRTC_APM
             }
         }
+        settings["quick_actions"]?.jsonPrimitive?.booleanOrNull?.let { enableQuickActions = it }
         settings["custom_files"]?.let { customFiles = it }
 
         firebase.addToCrashLog("Settings update")
@@ -420,12 +441,12 @@ class APPConfig @Inject constructor(val context: Context) {
         const val DEFAULT_RAW_PROXIMITY_THRESHOLD = 300
         const val DEFAULT_WAKE_WORD = "hey_jarvis"
         const val DEFAULT_WAKE_WORD_SOUND = "none"
+        const val DEFAULT_ALARM_SOUND = "alarm_sound"
         const val DEFAULT_WAKE_WORD_THRESHOLD = 0.6f
         const val DEFAULT_NOTIFICATION_VOLUME = 10
         const val DEFAULT_MUSIC_VOLUME = 10
         const val DEFAULT_SCREEN_BRIGHTNESS = 0.5f
         const val DEFAULT_SCREEN_AUTO_BRIGHTNESS = true
-        const val DEFAULT_SWIPE_REFRESH = true
         const val DEFAULT_DUCKING_VOLUME = 2
         const val DEFAULT_MUTE = false
         const val DEFAULT_MIC_GAIN = 0

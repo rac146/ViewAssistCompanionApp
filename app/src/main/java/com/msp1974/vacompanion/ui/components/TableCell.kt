@@ -18,7 +18,7 @@ fun RowScope.TableCell(
         text = text,
         Modifier
             .weight(weight),
-        fontSize = 16.sp,
+        style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onPrimary,
         textAlign = alignment,
 

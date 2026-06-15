@@ -4,12 +4,11 @@ import android.content.res.Configuration
 import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,6 +18,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -27,206 +28,220 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.msp1974.vacompanion.R
 import com.msp1974.vacompanion.ui.VAViewModel
+import com.msp1974.vacompanion.ui.State
+import com.msp1974.vacompanion.ui.components.AppFloatingActionButton
 import com.msp1974.vacompanion.ui.components.InfoItem
 import com.msp1974.vacompanion.ui.components.LabelledSwitch
-import com.msp1974.vacompanion.ui.components.UUIDEditDialog
 import com.msp1974.vacompanion.ui.theme.AppTheme
 import com.msp1974.vacompanion.ui.theme.CustomColours
 
 @Composable
 fun ConnectionScreen(vaViewModel: VAViewModel = viewModel()) {
     val vaUiState by vaViewModel.vacaState.collectAsState()
-    val orientation = LocalConfiguration.current.orientation
+    var showSettings by remember { mutableStateOf(false) }
+    var showPermissions by remember { mutableStateOf(false) }
 
-    when(orientation) {
-        Configuration.ORIENTATION_SQUARE,
-        Configuration.ORIENTATION_UNDEFINED,
-        Configuration.ORIENTATION_PORTRAIT -> {
-            Column(
-                modifier = Modifier
-                    .statusBarsPadding()
-                    .verticalScroll(rememberScrollState())
-                    .safeDrawingPadding()
-                    .background(MaterialTheme.colorScheme.background)
-                    .fillMaxSize(),
-            ) {
+    if (showSettings) {
+        SettingsLayout(
+            vaViewModel,
+            { showSettings = false }
+        )
+    } else if (showPermissions) {
+        PermissionsLayout(
+            viewModel = vaViewModel,
+            onBack = { showPermissions = false }
+        )
+    } else {
+        ConnectionContent(
+            vaUiState = vaUiState,
+            onSettingsClick = { showSettings = true },
+            onLaunchOnBootChange = { vaViewModel.launchOnBoot = it },
+            onCheckForUpdate = { vaViewModel.checkForUpdate() },
+            onPermissionsClick = { showPermissions = true },
+        )
+    }
+}
+
+@Composable
+fun ConnectionContent(
+    vaUiState: State,
+    onSettingsClick: () -> Unit,
+    onLaunchOnBootChange: (Boolean) -> Unit,
+    onCheckForUpdate: () -> Unit,
+    onPermissionsClick: () -> Unit,
+) {
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .background(MaterialTheme.colorScheme.background)
+    ) {
+        when(val orientation = LocalConfiguration.current.orientation) {
+            Configuration.ORIENTATION_LANDSCAPE -> {
+                Column() {
+                    Column(
+                        modifier = Modifier.weight(0.15f)
+                    ) {
+                        // Action Buttons in Landscape
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            if (vaUiState.updates.updateAvailable) {
+                                UpdateButton(
+                                    text = stringResource(R.string.button_update_required),
+                                    modifier = Modifier.padding(8.dp),
+                                    onClick = onCheckForUpdate
+                                )
+                            }
+                            if (!vaUiState.permissions.hasCorePermissions || !vaUiState.permissions.hasOptionalPermissions) {
+                                PermissionStatusButton(
+                                    text = "Permissions",
+                                    colour = if (!vaUiState.permissions.hasCorePermissions) CustomColours.RED else CustomColours.AMBER,
+                                    modifier = Modifier.padding(8.dp),
+                                    onClick = onPermissionsClick
+                                )
+                            }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .statusBarsPadding()
+                            .safeDrawingPadding()
+                            .weight(0.85f)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(0.4f)
+                                .fillMaxSize(),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            LogoImage(orientation)
+                        }
+                        Column(
+                            modifier = Modifier
+                                .weight(0.6f)
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            InfoTextBlock(vaUiState.appInfo)
+
+                            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
+                                LaunchOnBootSwitch(
+                                    vaUiState.launchOnBoot,
+                                    callback = onLaunchOnBootChange
+                                )
+                            } else {
+                                Text(
+                                    text = "To launch on boot, set this app as the launcher",
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier
+                                        .width(280.dp)
+                                        .padding(16.dp),
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                    Column(
+                        modifier = Modifier.weight(0.1f)
+                    ) { }
+                }
+            }
+            else -> { // Portrait and Default
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 30.dp)
-                        .weight(0.25f),
-                    verticalArrangement = Arrangement.Top,
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                        .statusBarsPadding()
+                        .safeDrawingPadding()
+                        .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    LogoImage(orientation, vaViewModel::showClearPairedDeviceDialog)
-                }
-                Column (
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(0.75f),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    InfoTextBlock(vaUiState.appInfo,  vaViewModel::showUUIDChangeDialog)
+                    Spacer(modifier = Modifier.height(40.dp))
+                    
+                    LogoImage(orientation)
+                    
+                    Spacer(modifier = Modifier.height(40.dp))
+                    
+                    InfoTextBlock(vaUiState.appInfo)
+                    
                     if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
-                        LaunchOnBootSwitch(vaUiState.launchOnBoot, callback = {
-                            vaViewModel.launchOnBoot = it
-                        })
+                        LaunchOnBootSwitch(vaUiState.launchOnBoot, callback = onLaunchOnBootChange)
                     } else {
                         Text(
                             text="To launch on boot, set this app as the launcher",
                             color = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier
                                 .width(280.dp)
-                                .padding(16.dp)
-
+                                .padding(16.dp),
+                            textAlign = TextAlign.Center
                         )
                     }
+
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(80.dp)
-                            .zIndex(2f),
-                        verticalArrangement = Arrangement.Top,
+                            .padding(top = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        when {
-                            vaUiState.updates.updateAvailable -> UpdateButton(
+                        if (vaUiState.updates.updateAvailable) {
+                            UpdateButton(
                                 text = stringResource(R.string.button_update_required),
-                                modifier = Modifier.padding(top=30.dp),
-                                onClick = { vaViewModel.checkForUpdate() })
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                onClick = onCheckForUpdate)
                         }
                         if (!vaUiState.permissions.hasCorePermissions || !vaUiState.permissions.hasOptionalPermissions) {
                             PermissionStatusButton(
                                 text = "Permissions",
                                 colour = if (!vaUiState.permissions.hasCorePermissions) CustomColours.RED else CustomColours.AMBER,
-                                modifier = Modifier.padding(top=30.dp),
-                                onClick = { vaViewModel.requestPermissions() }
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                onClick = onPermissionsClick
                             )
                         }
                     }
-
-                }
-                Column() {
-                    StatusText(vaUiState.statusMessage)
-                }
-                if (vaUiState.showUUIDChangeDialog) {
-                    UUIDEditDialog(
-                        onDismissRequest = {vaViewModel.showUUIDChangeDialog(false)},
-                        onConfirmation = vaViewModel::setUUID,
-                        initText = vaUiState.appInfo["UUID"]!!
-                    )
+                    
+                    Spacer(modifier = Modifier.height(100.dp)) // Space for Status and FAB
                 }
             }
         }
-        Configuration.ORIENTATION_LANDSCAPE -> {
-            Column(
-                modifier = Modifier.background(MaterialTheme.colorScheme.background)
-            ) {
-                Row() {
-                    Column(
-                        modifier = Modifier
-                            .weight(0.45f)
-                            .fillMaxSize()
-                            .padding(start = 10.dp),
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        LogoImage(orientation, vaViewModel::showClearPairedDeviceDialog)
-                    }
-                    Column(
-                        modifier = Modifier
-                            .weight(0.55f)
-                            .fillMaxSize(),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(80.dp)
-                                    .zIndex(2f),
-                                verticalArrangement = Arrangement.Top,
-                                horizontalAlignment = Alignment.End
-                            ) {
-                                when {
-                                    vaUiState.updates.updateAvailable -> UpdateButton(
-                                        text = stringResource(R.string.button_update_required),
-                                        modifier = Modifier.padding(16.dp),
-                                        onClick = { vaViewModel.checkForUpdate() })
-                                }
-                                if (!vaUiState.permissions.hasCorePermissions || !vaUiState.permissions.hasOptionalPermissions) {
-                                    PermissionStatusButton(
-                                        text = "Permissions",
-                                        colour = if (!vaUiState.permissions.hasCorePermissions) CustomColours.RED else CustomColours.AMBER,
-                                        modifier = Modifier.padding(16.dp),
-                                        onClick = { vaViewModel.requestPermissions() }
-                                    )
-                                }
-                            }
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize(),
-                                verticalArrangement = Arrangement.Center,
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                InfoTextBlock(vaUiState.appInfo, vaViewModel::showUUIDChangeDialog)
-                                if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
-                                    LaunchOnBootSwitch(vaUiState.launchOnBoot, callback = {
-                                        vaViewModel.launchOnBoot = it
-                                    })
-                                } else {
-                                    Text(
-                                        text="To launch on boot, set this app as the launcher",
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                        modifier = Modifier
-                                            .width(280.dp)
-                                            .padding(16.dp)
 
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Column() {
-                StatusText(vaUiState.statusMessage)
-            }
-            if (vaUiState.showUUIDChangeDialog) {
-                UUIDEditDialog(
-                    onDismissRequest = {vaViewModel.showUUIDChangeDialog(false)},
-                    onConfirmation = vaViewModel::setUUID,
-                    initText = vaUiState.appInfo["UUID"]!!
-                )
-            }
-        }
+        // Fixed elements at the bottom
+        StatusText(
+            statusMessage = vaUiState.statusMessage,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
+
+        AppFloatingActionButton(
+            onClick = onSettingsClick,
+            modifier = Modifier.align(Alignment.BottomEnd),
+            icon = Icons.Default.Settings,
+            contentDescription = "Settings"
+        )
     }
 }
 
 @Composable
-fun LogoImage(orientation: Int, onLongPress: () -> Unit) {
-    val haptics = LocalHapticFeedback.current
+fun LogoImage(orientation: Int) {
     Image(
         painter = painterResource(id = R.drawable.main_logo),
         contentDescription = "Logo",
@@ -236,26 +251,15 @@ fun LogoImage(orientation: Int, onLongPress: () -> Unit) {
                     Configuration.ORIENTATION_PORTRAIT -> Modifier.padding(start=48.dp, end=48.dp, top=8.dp)
                     else -> Modifier.padding(start=24.dp, end=24.dp, top=8.dp)
                 }
-                .combinedClickable (
-                    onLongClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLongPress()
-                    },
-                    onClick = {}
-                )
-
     )
 }
 
 @Composable
-fun InfoTextBlock(infoItems: Map<String, String>, onClick: () -> Unit) {
+fun InfoTextBlock(infoItems: Map<String, String>) {
     Column(
         modifier=Modifier
             .width(280.dp)
             .padding(16.dp)
-            .clickable {
-                onClick()
-            }
     ) {
         infoItems.forEach { (label, value) ->
             InfoItem(label, value)
@@ -266,17 +270,17 @@ fun InfoTextBlock(infoItems: Map<String, String>, onClick: () -> Unit) {
 
 
 @Composable
-fun StatusText(statusMessage: String) {
-    Column(
-        modifier = Modifier
-        .fillMaxSize()
-        .padding(bottom = 20.dp),
-        verticalArrangement = Arrangement.Bottom,
-        horizontalAlignment = Alignment.CenterHorizontally
+fun StatusText(statusMessage: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(bottom = 20.dp),
+        contentAlignment = Alignment.Center
     ) {
         Text(
             statusMessage,
-            color = MaterialTheme.colorScheme.onPrimary, textAlign = TextAlign.Start,
+            color = MaterialTheme.colorScheme.onPrimary, 
+            textAlign = TextAlign.Center,
             fontSize = 20.sp
         )
     }
@@ -320,7 +324,9 @@ fun PermissionStatusButton(text: String, colour: Color, modifier: Modifier = Mod
 @Preview(
     uiMode = Configuration.UI_MODE_NIGHT_YES,
     name = "DefaultPreviewDark",
-    apiLevel = 36
+    apiLevel = 36,
+    heightDp = 1024,
+    widthDp = 480,
 )
 @Preview(
     uiMode = Configuration.UI_MODE_NIGHT_NO,
@@ -338,7 +344,21 @@ fun AppPreview() {
                 .fillMaxSize(),
             color = MaterialTheme.colorScheme.background
         ) {
-            ConnectionScreen()
+            ConnectionContent(
+                vaUiState = State(
+                    appInfo = mapOf(
+                        "Version" to "1.0.0",
+                        "IP Address" to "192.168.1.100",
+                        "Port" to "8080",
+                        "UUID" to "1234-5678",
+                        "Paired to" to "Home Assistant"
+                    )
+                ),
+                onSettingsClick = {},
+                onLaunchOnBootChange = {},
+                onCheckForUpdate = {},
+                onPermissionsClick = {},
+            )
         }
     }
 }

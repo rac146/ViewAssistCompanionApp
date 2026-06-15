@@ -30,7 +30,7 @@ class CustomWebView @JvmOverloads constructor(
     lateinit private var customWebviewClient: CustomWebViewClient
     lateinit private var config: APPConfig
 
-
+    private val gestureDetector = WebViewGestureDetector()
     private val log = Logger()
     private var requestDisallow = false
     private val androidInterface: Any = object : Any() {
@@ -38,6 +38,10 @@ class CustomWebView @JvmOverloads constructor(
         fun requestScrollEvents() {
             requestDisallow = true
         }
+    }
+
+    fun setOnGestureListener(listener: WebViewGestureDetector.OnGestureListener) {
+        gestureDetector.setOnGestureListener(listener)
     }
 
     fun initialise(config: APPConfig, customWebViewClient: CustomWebViewClient) {
@@ -100,6 +104,7 @@ class CustomWebView @JvmOverloads constructor(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        gestureDetector.onTouchEvent(event, height)
         if (requestDisallow) {
             requestDisallowInterceptTouchEvent(true)
         }

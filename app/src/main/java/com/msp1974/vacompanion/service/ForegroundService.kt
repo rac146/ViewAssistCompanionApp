@@ -21,6 +21,7 @@ import com.msp1974.vacompanion.R
 import com.msp1974.vacompanion.VACAApplication
 import com.msp1974.vacompanion.broadcasts.BroadcastSender
 import com.msp1974.vacompanion.data.NetworkStatusManager
+import com.msp1974.vacompanion.device.DeviceInfo
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.settings.BackgroundTaskStatus
 import com.msp1974.vacompanion.utils.FirebaseManager
@@ -35,6 +36,7 @@ import javax.inject.Inject
 class VAForegroundService @Inject constructor() : LifecycleService() {
 
     @Inject lateinit var config: APPConfig
+    @Inject lateinit var deviceInfo: DeviceInfo
     @Inject lateinit var networkStatusManager: NetworkStatusManager
 
     private lateinit var firebase: FirebaseManager
@@ -133,7 +135,7 @@ class VAForegroundService @Inject constructor() : LifecycleService() {
                         firebase.logException(ex)
                     }
 
-                    backgroundTask = BackgroundTaskController(this@VAForegroundService, config, networkStatusManager)
+                    backgroundTask = BackgroundTaskController(this@VAForegroundService, config, deviceInfo, networkStatusManager)
                     backgroundTask?.start()
                     Timber.i("Background Service Started")
                     config.backgroundTaskRunning = true

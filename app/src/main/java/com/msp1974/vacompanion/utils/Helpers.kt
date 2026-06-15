@@ -61,5 +61,13 @@ class Helpers {
         }
 
         fun Float.round(decimals: Int = 2): Float  = (this * 10f.pow(decimals)).toInt() / 10f.pow(decimals)
+
+        fun String.capitalizeWords(delimiter: String = " ") =
+            split(delimiter).joinToString(delimiter) { word ->
+
+                val smallCaseWord = word.lowercase()
+                smallCaseWord.replaceFirstChar(Char::titlecaseChar)
+
+            }
     }
 }

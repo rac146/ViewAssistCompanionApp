@@ -39,7 +39,7 @@ android {
         applicationId = "com.msp1974.vacompanion"
         minSdk = 26
         targetSdk = 36
-        versionName = "0.11.3"
+        versionName = "0.12.0"
         versionCode = code
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
@@ -157,8 +157,8 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer.dash)
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.ui.compose)
+    implementation(libs.mlkit.face.detection)
     implementation(libs.jtransforms)
     implementation(libs.hilt.android)
     ksp(libs.hilt.android.compiler)
-
 }

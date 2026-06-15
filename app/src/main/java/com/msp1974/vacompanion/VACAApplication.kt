@@ -4,6 +4,10 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.system.Os
+import androidx.camera.camera2.Camera2Config
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.CameraXConfig
 import com.msp1974.vacompanion.utils.ActivityManager
 import dagger.hilt.android.HiltAndroidApp
 import timber.log.Timber
@@ -20,14 +24,19 @@ import javax.net.ssl.X509TrustManager
 
 
 @HiltAndroidApp
-class VACAApplication: Application() {
+class VACAApplication: Application(), CameraXConfig.Provider {
+
     override fun onCreate() {
         super.onCreate()
+
+        suppressMLKitSpam()
+
         Thread.setDefaultUncaughtExceptionHandler(AppExceptionHandler(this.applicationContext))
 
         disableSSLCertificateChecking()
 
         activityManager = ActivityManager(this)
+
         Timber.plant(DebugTree())
 
         // Create the notification channel (required for Android 8.0 and above)
@@ -41,6 +50,28 @@ class VACAApplication: Application() {
             getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.createNotificationChannel(channel)
 
+    }
+
+    private fun suppressMLKitSpam() {
+        try {
+            // Suppress TFLITE/XNNPack spam logs before any ML Kit/TFLite components load
+            Os.setenv("TFLITE_XNNPACK_DELEGATE_NO_LOGGING", "1", true)
+            Os.setenv("XNNPACK_LOG_LEVEL", "0", true)
+            Os.setenv("TFLITE_LOG_LEVEL", "0", true)
+            Os.setenv("TF_CPP_MIN_LOG_LEVEL", "3", true) // 3 = FATAL
+
+            // Native ML Kit tags often check these environment variables as a fallback for system properties
+            Os.setenv("log.tag.FaceDetectorV2Jni", "ERROR", true)
+            Os.setenv("log.tag.ThickFaceDetector", "ERROR", true)
+            Os.setenv("log.tag.Vision", "ERROR", true)
+        } catch (_: Exception) {}
+    }
+
+    override fun getCameraXConfig(): CameraXConfig {
+        return CameraXConfig.Builder.fromConfig(Camera2Config.defaultConfig())
+            .setAvailableCamerasLimiter(CameraSelector.DEFAULT_FRONT_CAMERA)
+            .setMinimumLoggingLevel(android.util.Log.ERROR)
+            .build()
     }
 
     private fun disableSSLCertificateChecking() {

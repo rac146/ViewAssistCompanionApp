@@ -1,10 +1,9 @@
 package com.msp1974.vacompanion.wyoming
 
 import android.content.Context
+import com.msp1974.vacompanion.device.DeviceInfo
 import com.msp1974.vacompanion.satellite.Satellite
 import com.msp1974.vacompanion.settings.APPConfig
-import com.msp1974.vacompanion.device.DeviceCapabilitiesData
-import com.msp1974.vacompanion.device.DeviceCapabilitiesManager
 import io.ktor.network.selector.ActorSelectorManager
 import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.aSocket
@@ -17,10 +16,8 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.yield
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -38,12 +35,7 @@ data class Connection(
     val handler: WyomingClientHandler,
 )
 
-data class MessageQueueItem(
-    val clientId: String,
-    val message: WyomingPacket
-)
-
-abstract class WyomingTCPServer(private val context: Context, val config: APPConfig): IEvents {
+abstract class WyomingTCPServer(private val context: Context, val config: APPConfig, val deviceInfo: DeviceInfo): IEvents {
 
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + job)
@@ -55,8 +47,8 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
     private var serverSocket: ServerSocket? = null
     private var restartIfStopped: Boolean = false
 
-    private var deviceInfo: DeviceCapabilitiesData = DeviceCapabilitiesManager(context, config).getDeviceInfo()
-    private val infoBuilder: WyomingInfoBuilder = WyomingInfoBuilder(context, config, deviceInfo)
+    private val infoBuilder: WyomingInfoBuilder = WyomingInfoBuilder(config)
+    private val capabilitiesBuilder: WyomingCapabilitiesBuilder = WyomingCapabilitiesBuilder(config, deviceInfo)
 
     var state: ServerState = ServerState.STOPPED
         set(value) {
@@ -284,16 +276,16 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
         }
     }
 
-    suspend fun sendPong(clientId: String) {
+    fun sendPong(clientId: String) {
         respondToGenericMessage(clientId, "pong", buildJsonObject { put("text", "") })
     }
 
-    suspend fun sendInfo(clientId: String) {
+    fun sendInfo(clientId: String) {
         respondToGenericMessage(clientId, "info", infoBuilder.buildInfo())
     }
 
-    suspend fun sendCapabilities(clientId: String) {
-        respondToGenericMessage(clientId, "capabilities", DeviceCapabilitiesManager.toJson(deviceInfo))
+    fun sendCapabilities(clientId: String) {
+        respondToGenericMessage(clientId, "capabilities", capabilitiesBuilder.buildInfo())
     }
 
     private suspend fun startSatellite(clientId: String) {
@@ -323,7 +315,7 @@ abstract class WyomingTCPServer(private val context: Context, val config: APPCon
                             delay(100)
                         }
                     }
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     Timber.w("Satellite taking too long to stop.  Terminating")
                     stopSatellite()
                 }

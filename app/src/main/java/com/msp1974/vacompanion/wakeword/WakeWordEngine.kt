@@ -10,13 +10,11 @@ import com.msp1974.vacompanion.audio.AudioDSP
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.utils.Event
 import com.msp1974.vacompanion.utils.Helpers.Companion.round
-import com.msp1974.vacompanion.utils.WakeWords
 import com.msp1974.vacompanion.wakeword.microwakeword.MicroWakeWordEngine
-import com.msp1974.vacompanion.wakeword.microwakeword.providers.AssetWakeWordProvider
+import com.msp1974.vacompanion.wakeword.microwakeword.providers.MicroWakeWordAssetProvider
+import com.msp1974.vacompanion.wakeword.models.WakeWordWithId
 import com.msp1974.vacompanion.wakeword.openwakeword.OpenWakeWordEngine
 import com.msp1974.vacompanion.wakeword.openwakeword.SherpaSpeakerVerifier
-import com.msp1974.vacompanion.wakeword.openwakeword.model.WakeWordDetection
-import com.msp1974.vacompanion.wakeword.openwakeword.model.WakeWordModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,10 +29,7 @@ import java.security.MessageDigest
 import java.util.LinkedList
 import kotlin.math.sqrt
 
-data class WakeWord(val name: String, val fileName: String, val builtIn: Boolean = true)
-enum class WakeWordEngineModel {MICROWAKEWORD, OPENWAKEWORD, OPENWAKEWORD_RT}
-
-open class WakeWordEngine(val context: Context, val config: APPConfig, val engine: WakeWordEngineModel) {
+open class WakeWordEngine(val context: Context, val config: APPConfig, val engine: WakeWordEngineModel, val isAndroidThings: Boolean) {
 
     private var activeWakeWords: List<String> = listOf()
     private var activeStopWords: List<String> = listOf()
@@ -72,63 +67,66 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
         var totalFrames: Int = 0,
     )
 
-
     private suspend fun get(): WakeWordEngineProvider? {
         Timber.i("Starting ${config.wakeWordEngine} wake word engine")
+
+
+        if (config.availableWakeWords == null) {
+            Timber.e("No available wake words")
+            return null
+        }
+
+        val availableWakeWords = config.availableWakeWords?.get(engine.toString()) ?: emptyList()
+
         when(engine) {
             WakeWordEngineModel.MICROWAKEWORD -> {
-                val availableWakeWords = AssetWakeWordProvider(context.assets, "microwakeword/wakeWords").get()
-                val availableStopWords = AssetWakeWordProvider(context.assets, "microwakeword/stopWords").get()
-                return MicroWakeWordEngine(context, config, activeWakeWords, activeStopWords, availableWakeWords, availableStopWords, muted = config.isMuted)
+                // TODO: Replace this with values from config availableWakeWords
+                // ATM this does not load stop words
+                val availableStopWords = MicroWakeWordAssetProvider(
+                    context.assets,
+                    "microwakeword/stopWords"
+                ).get()
+                return MicroWakeWordEngine(context, config, activeWakeWords, activeStopWords, availableWakeWords, availableStopWords, isAndroidThings = isAndroidThings, muted = config.isMuted)
             }
             WakeWordEngineModel.OPENWAKEWORD -> {
-                val wakeWords = WakeWords(context, "onnx").getWakeWords()
-                if (config.wakeWord in wakeWords.keys) {
-                    val wakeWordInfo = wakeWords[config.wakeWord]!!
-                    val models = listOf(
-                        WakeWordModel(
-                            name = wakeWordInfo.name,
-                            modelPath = wakeWordInfo.fileName,
-                            builtIn = wakeWordInfo.builtIn,
-                            threshold = config.wakeWordThreshold
+                availableWakeWords.forEach { entry ->
+                    if (config.wakeWord == entry.id) {
+                        return OpenWakeWordEngine(
+                            context = context,
+                            config = config,
+                            engine = WakeWordEngineModel.OPENWAKEWORD,
+                            activeWakeWords = activeWakeWords,
+                            availableWakeWords = availableWakeWords,
+                            detectionCooldownMs = 1500L,
+                            isAndroidThings = isAndroidThings,
+                            muted = config.isMuted,
+
                         )
-                    )
-                    return OpenWakeWordEngine(
-                        context = context,
-                        config = config,
-                        models = models,
-                        detectionCooldownMs = 1500L,
-                        muted = config.isMuted
-                    )
+                    }
                 }
             }
             WakeWordEngineModel.OPENWAKEWORD_RT -> {
-                val wakeWords = WakeWords(context, "tflite").getWakeWords()
-                if (config.wakeWord in wakeWords.keys) {
-                    val wakeWordInfo = wakeWords[config.wakeWord]!!
-                    val models = listOf(
-                        WakeWordModel(
-                            name = wakeWordInfo.name,
-                            modelPath = wakeWordInfo.fileName,
-                            builtIn = wakeWordInfo.builtIn,
-                            threshold = config.wakeWordThreshold
+                availableWakeWords.forEach { entry ->
+                    if (config.wakeWord == entry.id) {
+                        return OpenWakeWordEngine(
+                            context = context,
+                            config = config,
+                            engine = WakeWordEngineModel.OPENWAKEWORD_RT,
+                            activeWakeWords = activeWakeWords,
+                            availableWakeWords = availableWakeWords,
+                            detectionCooldownMs = 1500L,
+                            isAndroidThings = isAndroidThings,
+                            muted = config.isMuted
                         )
-                    )
-                    return OpenWakeWordEngine(
-                        context = context,
-                        config = config,
-                        models = models,
-                        detectionCooldownMs = 1500L,
-                        muted = config.isMuted
-                    )
+                    }
                 }
             }
         }
         return null
     }
 
-    fun getAvailableWakeWords(): List<WakeWordDetection> {
-        return listOf()
+    fun getAvailableWakeWords(): List<WakeWordWithId> {
+        return config.availableWakeWords?.get(engine.toString()) ?: emptyList()
     }
 
 

@@ -1,7 +1,11 @@
 package com.msp1974.vacompanion.wakeword.openwakeword.ml
 
 import android.content.res.AssetManager
+import com.msp1974.vacompanion.wakeword.models.WakeWordWithId
 import com.msp1974.vacompanion.wakeword.openwakeword.model.WakeWordModel
+import io.ktor.util.moveToByteArray
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import org.tensorflow.lite.Interpreter
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -12,15 +16,14 @@ import kotlin.io.path.Path
  * Handles LiteRT (TFLite) model loading and inference for wake word detection.
  */
 internal class TfliteModelRunner(
-    private val assetManager: AssetManager,
-    private val model: WakeWordModel
+    private val wakeWord: WakeWordWithId
 ) : ModelRunner {
 
     private var interpreter: Interpreter = createInterpreter()
 
     private fun createInterpreter(): Interpreter {
         return try {
-            val modelBytes = loadModel(model)
+            val modelBytes = runBlocking(Dispatchers.IO){loadModel(wakeWord)}
             val buffer = ByteBuffer.allocateDirect(modelBytes.size).apply {
                 order(ByteOrder.nativeOrder())
                 put(modelBytes)
@@ -31,19 +34,16 @@ internal class TfliteModelRunner(
             }
             Interpreter(buffer, options)
         } catch (e: IOException) {
-            throw RuntimeException("Failed to load model: ${model.modelPath}", e)
+            throw RuntimeException("Failed to load model: ${wakeWord.id}", e)
         }
     }
 
-    override fun loadModel(model: WakeWordModel): ByteArray {
-        return if (model.builtIn) {
-            assetManager.open(model.modelPath).use { inputStream ->
-                inputStream.readBytes()
-            }
-        } else {
-            val file = Path(model.modelPath).toFile()
-            file.readBytes()
+    override suspend fun loadModel(wakeWord: WakeWordWithId): ByteArray {
+        runCatching {
+            val modelBuffer = wakeWord.load()
+            return modelBuffer.moveToByteArray()
         }
+        return byteArrayOf()
     }
 
     /**

@@ -2,7 +2,6 @@ package com.msp1974.vacompanion.utils
 
 import android.content.Context
 import android.os.Bundle
-import android.util.Log
 import androidx.core.os.bundleOf
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
@@ -10,22 +9,23 @@ import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.analytics.analytics
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.crashlytics.crashlytics
+import timber.log.Timber
 
 class Logger {
     companion object {
         const val TAG = "ViewAssistCA"
     }
     fun d(message: String) {
-        Log.d(TAG, message)
+        Timber.tag(TAG).d(message)
     }
     fun e(message: String) {
-        Log.e(TAG, message)
+        Timber.tag(TAG).e(message)
     }
     fun i(message: String) {
-        Log.i(TAG, message)
+        Timber.tag(TAG).i(message)
     }
     fun w(message: String) {
-        Log.w(TAG, message)
+        Timber.tag(TAG).w(message)
     }
 }
 
@@ -39,21 +39,22 @@ class FirebaseManager private constructor(context: Context? = null) {
 
     private fun initialiseFirebase(context: Context?) {
         if (context == null) {
-            Log.w(Logger.TAG, "Firebase context unavailable. Firebase features disabled.")
+            Timber.tag(Logger.TAG).w("Firebase context unavailable. Firebase features disabled.")
             return
         }
 
         try {
             val appContext = context.applicationContext
             if (FirebaseApp.getApps(appContext).isEmpty()) {
-                Log.w(Logger.TAG, "FirebaseApp not initialized. Skipping Firebase setup.")
+                Timber.tag(Logger.TAG).w("FirebaseApp not initialized. Skipping Firebase setup.")
                 return
             }
 
             firebaseAnalytics = Firebase.analytics
             firebaseCrashlytics = Firebase.crashlytics
         } catch (e: Exception) {
-            Log.w(Logger.TAG, "Failed to initialize Firebase. Firebase features disabled.", e)
+            Timber.tag(Logger.TAG)
+                .w(e, "Failed to initialize Firebase. Firebase features disabled.")
             firebaseAnalytics = null
             firebaseCrashlytics = null
         }
@@ -81,7 +82,7 @@ class FirebaseManager private constructor(context: Context? = null) {
                     try {
                         FirebaseManager(context).also { instance = it }
                     } catch (e: Exception) {
-                        Log.w(Logger.TAG, "FirebaseManager fallback initialization used.", e)
+                        Timber.tag(Logger.TAG).w(e, "FirebaseManager fallback initialization used.")
                         FirebaseManager().also { instance = it }
                     }
                 }

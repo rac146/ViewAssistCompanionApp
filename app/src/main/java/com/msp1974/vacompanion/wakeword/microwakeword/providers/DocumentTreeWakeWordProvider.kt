@@ -6,8 +6,8 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
-import com.msp1974.vacompanion.wakeword.microwakeword.models.WakeWord
-import com.msp1974.vacompanion.wakeword.microwakeword.models.WakeWordWithId
+import com.msp1974.vacompanion.wakeword.models.WakeWord
+import com.msp1974.vacompanion.wakeword.models.WakeWordWithId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,6 +19,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import com.msp1974.vacompanion.utils.copyTo
+import com.msp1974.vacompanion.wakeword.WakeWordProvider
 
 @OptIn(ExperimentalSerializationApi::class)
 class DocumentTreeWakeWordProvider(

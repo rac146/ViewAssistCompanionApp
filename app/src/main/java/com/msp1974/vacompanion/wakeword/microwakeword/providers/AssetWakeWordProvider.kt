@@ -2,20 +2,22 @@ package com.msp1974.vacompanion.wakeword.microwakeword.providers
 
 import android.content.res.AssetManager
 import android.util.Log
-import com.msp1974.vacompanion.wakeword.microwakeword.models.WakeWord
-import com.msp1974.vacompanion.wakeword.microwakeword.models.WakeWordWithId
+import com.msp1974.vacompanion.wakeword.WakeWordProvider
+import com.msp1974.vacompanion.wakeword.models.WakeWord
+import com.msp1974.vacompanion.wakeword.models.WakeWordWithId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
+import timber.log.Timber
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 
 @OptIn(ExperimentalSerializationApi::class)
-class AssetWakeWordProvider(
+class MicroWakeWordAssetProvider(
     private val assets: AssetManager,
     private val path: String = DEFAULT_WAKE_WORD_PATH,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO
@@ -31,7 +33,7 @@ class AssetWakeWordProvider(
                     val id = asset.substring(0, asset.lastIndexOf(".json"))
                     add(WakeWordWithId(id, wakeWord) { loadModel(wakeWord.model) })
                 }.onFailure {
-                    Log.e(TAG, "Error loading wake word: $asset", it)
+                    Timber.e(it, "Error loading wake word: $asset")
                 }
             }
         }
@@ -55,7 +57,6 @@ class AssetWakeWordProvider(
     }
 
     companion object {
-        private const val TAG = "AssetWakeWordProvider"
         const val DEFAULT_WAKE_WORD_PATH = "microwakeword/wakeWords"
     }
 }

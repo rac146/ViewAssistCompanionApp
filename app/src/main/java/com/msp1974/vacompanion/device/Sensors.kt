@@ -14,7 +14,6 @@ import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.utils.Event
 import timber.log.Timber
 import java.util.Timer
-import javax.inject.Inject
 import kotlin.collections.iterator
 import kotlin.concurrent.timer
 import kotlin.math.abs
@@ -23,7 +22,7 @@ interface SensorUpdatesCallback {
     fun onUpdate(data: MutableMap<String, Any>)
 }
 
-class Sensors(val context: Context, val config: APPConfig, val cbFunc: SensorUpdatesCallback) {
+class Sensors(val context: Context, val config: APPConfig, val deviceInfo: DeviceInfo, val cbFunc: SensorUpdatesCallback) {
 
     var sensorManager: SensorManager = context.getSystemService(SENSOR_SERVICE) as SensorManager
 
@@ -88,9 +87,8 @@ class Sensors(val context: Context, val config: APPConfig, val cbFunc: SensorUpd
 
     init {
         Timber.d("Starting sensors")
-        val dm = DeviceCapabilitiesManager(context, config)
-        isRawProximitySensor = dm.getProximitySensorType() == "raw"
-        hasBattery = dm.hasBattery()
+        isRawProximitySensor = deviceInfo.hardware.proximitySensorType == "raw"
+        hasBattery = deviceInfo.hardware.hasBattery
 
         val sensors: Map<String, Int> = mapOf(
             "light" to Sensor.TYPE_LIGHT,

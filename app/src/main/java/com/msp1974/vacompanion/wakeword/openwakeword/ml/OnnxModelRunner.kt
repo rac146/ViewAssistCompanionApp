@@ -4,7 +4,17 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.res.AssetManager
+import com.msp1974.vacompanion.wakeword.models.WakeWord
+import com.msp1974.vacompanion.wakeword.models.WakeWordWithId
 import com.msp1974.vacompanion.wakeword.openwakeword.model.WakeWordModel
+import io.ktor.util.moveToByteArray
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.runBlocking
+import timber.log.Timber
+import java.io.FileNotFoundException
 import java.io.IOException
 import kotlin.io.path.Path
 
@@ -12,8 +22,7 @@ import kotlin.io.path.Path
  * Handles ONNX model loading and inference for wake word detection.
  */
 internal class OnnxModelRunner(
-    private val assetManager: AssetManager,
-    private val model: WakeWordModel
+    private val wakeWord: WakeWordWithId
 ) : ModelRunner {
 
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
@@ -21,25 +30,21 @@ internal class OnnxModelRunner(
 
     private fun createSession(): OrtSession {
         return try {
-                val modelBytes = loadModel(model)
-                val sessionOptions = OrtSession.SessionOptions()
-                sessionOptions.setInterOpNumThreads(1)
-                sessionOptions.setIntraOpNumThreads(1)
-                env.createSession(modelBytes, sessionOptions)
+            val modelBytes = runBlocking(Dispatchers.IO) { loadModel(wakeWord) }
+            val sessionOptions = OrtSession.SessionOptions()
+            sessionOptions.setInterOpNumThreads(1)
+            sessionOptions.setIntraOpNumThreads(1)
+            env.createSession(modelBytes, sessionOptions)
+        } catch (e: FileNotFoundException) {
+            throw RuntimeException("Unable to load ${wakeWord.id}. ${wakeWord.wakeWord.model} not found")
         } catch (e: IOException) {
-            throw RuntimeException("Failed to load model: $model.modelPath", e)
+            throw RuntimeException("Failed to load model: ${wakeWord.id}", e)
         }
     }
 
-    override fun loadModel(model: WakeWordModel): ByteArray {
-        if (model.builtIn) {
-            assetManager.open(model.modelPath).use { inputStream ->
-                return inputStream.readBytes()
-            }
-        } else {
-            val file = Path(model.modelPath).toFile()
-            return file.readBytes()
-        }
+    override suspend fun loadModel(wakeWord: WakeWordWithId): ByteArray {
+        val modelBuffer = wakeWord.load()
+        return modelBuffer.moveToByteArray()
     }
 
     /**

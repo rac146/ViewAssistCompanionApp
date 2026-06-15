@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.foundation.text.input.TextFieldBuffer
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.delete
 import androidx.compose.foundation.text.input.maxLength
 import androidx.compose.foundation.text.input.rememberTextFieldState
@@ -23,6 +24,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -30,80 +32,106 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
-
 @Composable
 fun UUIDEditDialog(
     onDismissRequest: () -> Unit,
     onConfirmation: (uuid: String) -> Unit,
+    onClose: () -> Unit,
     initText: String,
     confirmText: String = "OK",
     dismissText: String = "Cancel",
 ) {
     val uuid = rememberTextFieldState(initialText = initText)
-    Dialog(onDismissRequest = { onDismissRequest() },
+    Dialog(
+        onDismissRequest = { onDismissRequest() },
         properties = DialogProperties(
             dismissOnBackPress = true,
             dismissOnClickOutside = true,
             usePlatformDefaultWidth = false,
         ),
     ) {
-        // Draw a rectangle shape with rounded corners inside the dialog
-        Card(
+        UUIDEditDialogContent(
+            uuid = uuid,
+            onDismissRequest = onDismissRequest,
+            onConfirmation = onConfirmation,
+            onClose = onClose,
+            confirmText = confirmText,
+            dismissText = dismissText
+        )
+    }
+}
+
+@Composable
+fun UUIDEditDialogContent(
+    uuid: TextFieldState,
+    onDismissRequest: () -> Unit,
+    onConfirmation: (uuid: String) -> Unit,
+    onClose: () -> Unit,
+    confirmText: String,
+    dismissText: String,
+) {
+    // Draw a rectangle shape with rounded corners inside the dialog
+    Card(
+        modifier = Modifier
+            .padding(16.dp)
+            .width(400.dp)
+            .height(320.dp),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(
             modifier = Modifier
-                .padding(16.dp)
-                .width(400.dp)
-                .height(320.dp),
-            shape = RoundedCornerShape(16.dp),
+                .fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Column(
+            Text(
+                text = "Edit Device UUID",
+                fontSize = 18.sp,
+                modifier = Modifier
+                    .padding(16.dp),
+            )
+            Text(
+                text = "WARNING: Changing the UUID will unpair the device and require the VACA and View Assist entries to be deleted and readded.",
+                fontSize = 12.sp,
+                modifier = Modifier
+                    .padding(16.dp),
+            )
+            TextField(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                state = uuid,
+                label = { Text("UUID") },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    imeAction = ImeAction.Done,
+                ),
+                inputTransformation = InputTransformation.maxLength(32)
+                    .then(CustomInputTransformation()),
+            )
+            Row(
                 modifier = Modifier
                     .fillMaxSize(),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.Bottom
             ) {
-                Text(
-                    text = "Edit Device UUID",
-                    fontSize = 18.sp,
-                    modifier = Modifier
-                        .padding(16.dp),
-                )
-                Text(
-                    text = "WARNING: Changing the UUID will unpair the device and require the VACA and View Assist entries to be deleted and readded.",
-                    fontSize = 12.sp,
-                    modifier = Modifier
-                        .padding(16.dp),
-                )
-                TextField(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    state = uuid,
-                    label = { Text("UUID") },
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = androidx.compose.ui.text.input.ImeAction.Done,
-                    ),
-                    inputTransformation = InputTransformation.maxLength(32)
-                        .then(CustomInputTransformation()),
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.Bottom
+                Button(
+                    onClick = {
+                        onDismissRequest()
+                        onClose()
+                              },
+                    modifier = Modifier.padding(8.dp),
                 ) {
-                    Button(
-                        onClick = { onDismissRequest() },
-                        modifier = Modifier.padding(8.dp),
-                    ) {
-                        Text(dismissText)
-                    }
-                    Button(
-                        onClick = { onConfirmation(uuid.text.toString()) },
-                        modifier = Modifier.padding(8.dp),
-                    ) {
-                        Text(confirmText)
-                    }
+                    Text(dismissText)
+                }
+                Button(
+                    onClick = {
+                        onConfirmation(uuid.text.toString())
+                        onClose()
+                              },
+                    modifier = Modifier.padding(8.dp),
+                ) {
+                    Text(confirmText)
                 }
             }
         }
@@ -112,10 +140,11 @@ fun UUIDEditDialog(
 
 class CustomInputTransformation : InputTransformation {
     override fun TextFieldBuffer.transformInput() {
-        // Iterate through all characters in the buffer
+        // Iterate through all characters in the buffer backwards to safely delete
         for (i in length - 1 downTo 0) {
-            if (!asCharSequence()[i].isLetterOrDigit() && asCharSequence()[i].toString() != "_" && asCharSequence()[i].toString() != "-" ) {
-                // If the character is not alphanumeric, delete it
+            val char = asCharSequence()[i]
+            if (!char.isLetterOrDigit() && char != '_' && char != '-') {
+                // If the character is not alphanumeric and not _ or -, delete it
                 delete(i, i + 1)
             }
         }
@@ -125,9 +154,14 @@ class CustomInputTransformation : InputTransformation {
 @Preview
 @Composable
 fun UUIDEditDialogPreview() {
-    UUIDEditDialog(
+    val uuid = rememberTextFieldState(initialText = "abcde123456")
+    // Preview the content directly to avoid Dialog-related render issues in Preview
+    UUIDEditDialogContent(
+        uuid = uuid,
         onDismissRequest = {},
         onConfirmation = {},
-        initText = "abcde123456"
+        onClose = {},
+        confirmText = "OK",
+        dismissText = "Cancel"
     )
 }

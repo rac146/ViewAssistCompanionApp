@@ -28,8 +28,8 @@ class SatelliteMediaManager(val context: Context, val config: APPConfig) {
     class AlarmManager(val context: Context) {
         val alarmService = Intent(context, AlarmService::class.java)
 
-        fun start(url: String) {
-            alarmService.putExtra("url", url)
+        fun start(uri: String) {
+            alarmService.putExtra("uri", uri)
             context.startService(alarmService)
         }
 

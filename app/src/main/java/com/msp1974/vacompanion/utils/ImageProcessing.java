@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.jjoe64.motiondetection.motiondetection;
+package com.msp1974.vacompanion.utils;
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -126,6 +126,16 @@ public abstract class ImageProcessing {
             for (int i = 0; i < width; i++, yp++) {
                 int y = (0xff & (yuv420sp[yp])) - 16;
                 if (y < 0) y = 0;
+                
+                // Low light boost: scale up values to improve detection range in dark environments
+                // Using a non-linear boost can help preserve highlights while lifting shadows.
+                if (y > 0 && y < 64) {
+                    y = (int)(y * 2.0);
+                } else if (y >= 64 && y < 128) {
+                    y = (int)(y * 1.5);
+                }
+                if (y > 255) y = 255;
+
                 hsl[yp] = y;
             }
         }

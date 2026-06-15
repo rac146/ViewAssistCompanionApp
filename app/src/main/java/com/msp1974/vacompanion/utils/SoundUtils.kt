@@ -2,9 +2,11 @@ package com.msp1974.vacompanion.utils
 
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Context.NOTIFICATION_SERVICE
 import android.media.AudioManager
 import android.os.Build
 import android.provider.Settings
+import timber.log.Timber
 
 
 class SoundControl(private val context: Context) {
@@ -15,7 +17,7 @@ class SoundControl(private val context: Context) {
     init {
         this.audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         this.notificationManager =
-            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            context.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
     }
 
     // Toggle between silent, vibrate, and normal modes
@@ -71,5 +73,16 @@ class SoundControl(private val context: Context) {
         private const val MODE_SILENT = 0
         private const val MODE_VIBRATE = 1
         private const val MODE_NORMAL = 2
+
+        fun isDoNotDisturbEnabled(context: Context): Boolean {
+            val notificationManager =
+                context.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            if (notificationManager.isNotificationPolicyAccessGranted) {
+                return notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
+            } else {
+                Timber.w("Unable to check do not disturb, notification policy access not granted")
+                return false
+            }
+        }
     }
 }

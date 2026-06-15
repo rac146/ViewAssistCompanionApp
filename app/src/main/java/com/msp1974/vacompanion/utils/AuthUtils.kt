@@ -31,6 +31,13 @@ class AuthUtils(val config: APPConfig) {
             val force = payloadJson["force"]?.jsonPrimitive?.boolean ?: false
 
             log.d("External auth callback in progress...")
+
+            if (!Helpers.isNetworkAvailable(config.context)) {
+                Timber.w("Network unavailable.  Not performing authorisation ")
+                setAuthStage(view, PageLoadingStage.AUTH_REQUIRED)
+                return
+            }
+
             setAuthStage(view, PageLoadingStage.AUTHORISING)
             if (config.refreshToken == "") {
                 Timber.d("No refresh token.  Proceeding to login screen")

@@ -2,22 +2,26 @@ package com.msp1974.vacompanion.satellite
 
 import android.content.Context
 import android.media.AudioManager
-import com.msp1974.vacompanion.R
 import com.msp1974.vacompanion.settings.APPConfig
-import com.msp1974.vacompanion.device.DeviceCapabilitiesManager
 import com.msp1974.vacompanion.device.VolumeManager
 import com.msp1974.vacompanion.utils.Event
 import com.msp1974.vacompanion.utils.EventListener
+import com.msp1974.vacompanion.utils.SoundControl
+import com.msp1974.vacompanion.utils.WebViewGestureDetector
+import com.msp1974.vacompanion.wyoming.WyomingInfoBuilder
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import timber.log.Timber
+import java.time.Instant
+import java.time.format.DateTimeFormatter
 
 
 class SatelliteCustomEventHandler(
@@ -69,7 +73,7 @@ class SatelliteCustomEventHandler(
                 }
             }
             "notificationVolume" -> {
-                if (!DeviceCapabilitiesManager.isDoNotDisturbEnabled(context)) {
+                if (!SoundControl.isDoNotDisturbEnabled(context)) {
                     volumeManager.setVolume(AudioManager.STREAM_NOTIFICATION, event.newValue as Int)
                 }
             }
@@ -98,13 +102,7 @@ class SatelliteCustomEventHandler(
                 }
 
                 if (config.wakeWordSound != "none") {
-                    try {
-                        scope.launch {
-                            satellite.mediaManager.soundPlayer.play(R.raw.error)
-                        }
-                    } catch (e: Exception) {
-                        Timber.e("Error playing wake word sound: ${e.message.toString()}")
-                    }
+                    satellite.playErrorSound()
                 }
                 //audioRoute = AudioRouteOption.DETECT
                 satellite.sendDiagnostics(0f, 0f)
@@ -126,22 +124,36 @@ class SatelliteCustomEventHandler(
                 )
             }
             "screenOn" -> {
-                satellite.sendSetting("screen_on", event.newValue as Boolean)
-            }
-            "enableMotionDetection" -> {
-                val state = event.newValue as Boolean
-                if (state) {
-                    satellite.motionTask.startCamera()
-                } else {
-                    satellite.motionTask.stopCamera()
+                val isOn = event.newValue as Boolean
+                satellite.sendSetting("screen_on", isOn)
+                if (isOn && config.enableMotionDetection) {
+                    // Force restart of camera when screen turns on to ensure recovery
+                    scope.launch {
+                        delay(500)
+                        satellite.motionTask.startCamera()
+                    }
                 }
             }
-            "lastMotion" -> {
+            "motionDetectionMode" -> {
+                val mode = event.newValue as String
+                if (mode != "none") {
+                    if (!config.cameraStreamActive) {
+                        satellite.motionTask.startCamera()
+                    }
+                } else {
+                    scope.launch { satellite.motionTask.stopCamera() }
+                }
+            }
+            "motion" -> {
+                val value = event.newValue as? Boolean ?: true
+                config.lastMotion = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
                 satellite.sendStatus(
                     buildJsonObject {
                         putJsonObject("sensors", {
-                            put("motion_detected", true)
-                            put("last_motion", config.lastMotion)
+                            put("motion_detected", value)
+                            if (value) {
+                                put("last_motion", config.lastMotion)
+                            }
                         })
                     }
                 )
@@ -155,9 +167,6 @@ class SatelliteCustomEventHandler(
                     }
                 )
             }
-            "motionDetectionSensitivity" -> {
-                satellite.motionTask.setSensitivity(event.newValue as Int)
-            }
             "musicPlayerPlayingStatus" -> {
                 satellite.sendStatus(
                     buildJsonObject {
@@ -166,6 +175,34 @@ class SatelliteCustomEventHandler(
                         })
                     }
                 )
+            }
+            "cameraStreamActive" -> {
+                val active = event.newValue as Boolean
+                if (active) {
+                    scope.launch { satellite.motionTask.stopCamera() }
+                } else if (config.enableMotionDetection) {
+                    satellite.motionTask.startCamera()
+                }
+            }
+            "updateAvailableWakeWords" -> {
+                val infoBuilder = WyomingInfoBuilder(config)
+                satellite.sendEvent("info", infoBuilder.buildInfo())
+            }
+            "updateCustomFiles" -> {
+                satellite.sendCapabilities()
+            }
+            "gesture" -> {
+                val data = event.newValue as? WebViewGestureDetector.GestureEvent
+                if (data != null) {
+                    satellite.sendCustomEvent("gesture",
+                        buildJsonObject {
+                            put("gesture", data.direction.toString().lowercase()  )
+                            put("touch_points", data.pointers)
+                            put("x", data.startX)
+                            put("y", data.startX)
+                        }
+                    )
+                }
             }
             else -> consumed = false
         }

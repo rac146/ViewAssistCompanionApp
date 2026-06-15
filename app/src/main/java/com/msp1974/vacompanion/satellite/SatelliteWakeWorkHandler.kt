@@ -3,6 +3,7 @@ package com.msp1974.vacompanion.satellite
 import android.Manifest
 import android.content.Context
 import com.msp1974.vacompanion.broadcasts.BroadcastSender
+import com.msp1974.vacompanion.device.DeviceInfo
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.utils.FirebaseManager
 import com.msp1974.vacompanion.utils.Permissions
@@ -39,7 +40,7 @@ interface IWakeWordHandler {
     fun onDiagnostics(level: Float, lastDetectionLevel: Float)
 }
 
-abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPConfig, val scope: CoroutineScope): IWakeWordHandler {
+abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPConfig, val deviceInfo: DeviceInfo, val scope: CoroutineScope): IWakeWordHandler {
 
     val firebase = FirebaseManager.getInstance(context)
 
@@ -85,7 +86,8 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
                         "openwakeword" -> WakeWordEngineModel.OPENWAKEWORD
                         "openwakeword-rt" -> WakeWordEngineModel.OPENWAKEWORD_RT
                         else -> WakeWordEngineModel.MICROWAKEWORD
-                    }
+                    },
+                    deviceInfo.software.isAndroidThings
                 )
                 engine?.setActiveWakeWords(listOf(config.wakeWord))
                 engine?.setActiveStopWords(listOf("stop"))
@@ -123,7 +125,7 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
 
 
     fun runWakeWordDetection() {
-        if (!Permissions(context, config).hasPermission(Manifest.permission.RECORD_AUDIO)) {
+        if (!Permissions(context, config, deviceInfo).hasPermission(Manifest.permission.RECORD_AUDIO)) {
             return
         }
 

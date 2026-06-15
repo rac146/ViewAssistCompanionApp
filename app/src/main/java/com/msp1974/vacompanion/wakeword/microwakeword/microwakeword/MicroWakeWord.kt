@@ -1,9 +1,8 @@
 package com.msp1974.vacompanion.wakeword.microwakeword.microwakeword
 
-import com.msp1974.vacompanion.wakeword.microwakeword.models.DetectionInfo
-import com.msp1974.vacompanion.wakeword.microwakeword.models.WakeWordWithId
+import com.msp1974.vacompanion.wakeword.models.DetectionInfo
+import com.msp1974.vacompanion.wakeword.models.WakeWordWithId
 import org.tensorflow.lite.Interpreter
-import timber.log.Timber
 import java.nio.ByteBuffer
 
 class MicroWakeWord(

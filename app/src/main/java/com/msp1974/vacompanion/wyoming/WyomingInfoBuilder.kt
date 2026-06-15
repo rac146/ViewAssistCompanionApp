@@ -1,10 +1,6 @@
 package com.msp1974.vacompanion.wyoming
 
-import android.content.Context
 import com.msp1974.vacompanion.settings.APPConfig
-import com.msp1974.vacompanion.device.DeviceCapabilitiesData
-import com.msp1974.vacompanion.device.DeviceCapabilitiesManager
-import com.msp1974.vacompanion.utils.WakeWords
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -13,12 +9,12 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 
-class WyomingInfoBuilder(private val context: Context, private val config: APPConfig, private val deviceInfo: DeviceCapabilitiesData) {
+class WyomingInfoBuilder(private val config: APPConfig) {
 
     @OptIn(ExperimentalSerializationApi::class)
     fun buildInfo(): JsonObject {
-        val owwWakeWords = WakeWords(context, "onnx").getWakeWords()
-        val owwRTWakeWords = WakeWords(context, "tflite").getWakeWords()
+        val availableWakeWords = config.availableWakeWords
+
 
         return buildJsonObject {
             put("version", config.version)
@@ -35,41 +31,19 @@ class WyomingInfoBuilder(private val context: Context, private val config: APPCo
                     }
                     put("installed", true)
                     putJsonArray("models") {
-                        owwWakeWords.forEach { (key, value) ->
-                            add(buildJsonObject {
-                                put("name", key)
-                                putJsonObject("attribution") {
-                                    put("name", "openwakeword")
-                                    put("url", "")
-                                }
-                                put("installed", true)
-                                putJsonArray("languages") { add(JsonPrimitive("en")) }
-                                put("phrase", value.name)
-                            })
-                        }
-                        owwRTWakeWords.forEach { (key, value) ->
-                            add(buildJsonObject {
-                                put("name", key)
-                                putJsonObject("attribution") {
-                                    put("name", "openwakeword-rt")
-                                    put("url", "")
-                                }
-                                put("installed", true)
-                                putJsonArray("languages") { add(JsonPrimitive("en")) }
-                                put("phrase", value.name)
-                            })
-                        }
-                        MWW_WAKE_WORDS.forEach { name ->
-                            add(buildJsonObject {
-                                put("name", name)
-                                putJsonObject("attribution") {
-                                    put("name", "microwakeword")
-                                    put("url", "")
-                                }
-                                put("installed", true)
-                                putJsonArray("languages") { add(JsonPrimitive("en")) }
-                                put("phrase", name.replace("_", " "))
-                            })
+                        availableWakeWords?.forEach { (wakeWordEngineType, wakeWordWithIdList) ->
+                            wakeWordWithIdList.forEach { entry ->
+                                add(buildJsonObject {
+                                    put("name", entry.id)
+                                    putJsonObject("attribution") {
+                                        put("name", wakeWordEngineType.lowercase())
+                                        put("url", "")
+                                    }
+                                    put("installed", true)
+                                    putJsonArray("languages") { add(JsonPrimitive("en")) }
+                                    put("phrase", entry.wakeWord.wake_word)
+                                })
+                            }
                         }
                     }
                 })
@@ -93,17 +67,7 @@ class WyomingInfoBuilder(private val context: Context, private val config: APPCo
                 }
                 putJsonArray("active_wake_words") { add(JsonPrimitive(config.wakeWord)) }
                 put("max_active_wake_words", 1)
-
-                // TODO: Review if this nested structure should be part of the core satellite object or a custom feature.
-                put("capabilities", DeviceCapabilitiesManager.Companion.toJson(deviceInfo))
             }
         }
-    }
-
-    companion object {
-        private val MWW_WAKE_WORDS = listOf(
-            "alexa", "hey_home_assistant", "hey_jarvis", "hey_luna",
-            "hey_mycroft", "okay_computer", "okay_nabu"
-        )
     }
 }

@@ -1,4 +1,4 @@
-package com.msp1974.vacompanion.wakeword.microwakeword.models
+package com.msp1974.vacompanion.wakeword.models
 
 import kotlinx.serialization.Serializable
 import java.nio.ByteBuffer
