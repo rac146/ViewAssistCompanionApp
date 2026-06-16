@@ -228,6 +228,10 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
         engine?.startSpeakerEnrollment()
     }
 
+    fun clearSpeakerEnrollment() {
+        engine?.clearSpeakerEnrollment()
+    }
+
     private fun holdLastDetectionLevel(detectionLevel: Float, duration: Long = 2000) {
         if (detectionLevel > lastWakeWordDetectionScore) {
             lastWakeWordDetectionScore = detectionLevel

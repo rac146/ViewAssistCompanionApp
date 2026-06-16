@@ -95,6 +95,11 @@ class SatelliteCustomEventHandler(
                     satellite.startSpeakerEnrollment()
                 }
             }
+            "speakerEnrollmentClear" -> {
+                scope.launch {
+                    satellite.clearSpeakerEnrollment()
+                }
+            }
             "recognitionError" -> {
                 val errorText = event.oldValue as? String ?: ""
                 if (errorText.isNotEmpty()) {

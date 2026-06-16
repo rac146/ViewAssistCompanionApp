@@ -168,6 +168,38 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
         speakerEnrollmentRequested = true
     }
 
+    fun clearSpeakerEnrollment() {
+        speakerEnrollmentRequested = false
+        enrollmentState = null
+
+        val paths = linkedSetOf<String>()
+        val configuredPath = config.speakerVerificationEmbeddingPath.trim()
+        if (configuredPath.isNotEmpty()) {
+            paths.add(configuredPath)
+        }
+        paths.add(File(context.filesDir, "speaker/enrolled_embedding.txt").absolutePath)
+
+        var deletedAny = false
+        paths.forEach { path ->
+            runCatching {
+                val file = File(path)
+                if (file.exists()) {
+                    if (file.delete()) {
+                        deletedAny = true
+                    } else {
+                        Timber.w("Failed to delete speaker enrollment file: %s", file.absolutePath)
+                    }
+                }
+            }.onFailure {
+                Timber.w(it, "Error deleting speaker enrollment file: %s", path)
+            }
+        }
+
+        config.speakerVerificationEmbeddingPath = ""
+        config.speakerVerificationEnabled = false
+        toast(if (deletedAny) "Speaker enrollment removed" else "No speaker enrollment found")
+    }
+
     fun start() = flow {
         maybeEnableSpeakerVerificationFromExistingEnrollment()
         engineInstance = get()
@@ -201,6 +233,13 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
                                     rawDetected.wakeWord,
                                     rawDetected.timestamp
                                 )
+                                return@collect
+                            }
+
+                            if (!config.speakerVerificationEnabled) {
+                                sharedVerifier?.close()
+                                sharedVerifier = null
+                                emit(WakeWordEngineProvider.AudioResult.WakeDetected(rawDetected))
                                 return@collect
                             }
 
