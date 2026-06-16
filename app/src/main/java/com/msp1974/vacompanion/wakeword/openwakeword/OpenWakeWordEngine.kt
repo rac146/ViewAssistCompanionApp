@@ -132,9 +132,9 @@ class OpenWakeWordEngine(
         getWakeWord(wakeWordId)?.let { wakeWord ->
             val processor = ModelProcessor(engine, wakeWord)
             modelProcessors[wakeWord] = processor
+            scoreWindows.remove(wakeWord.id)
+            detectionStates.remove(wakeWord.id)
         }
-        scoreWindows.remove(model.name)
-        detectionStates.remove(model.name)
     }
 
     fun removeModel(modelName: String) {
@@ -236,16 +236,16 @@ class OpenWakeWordEngine(
             modelProcessors.map { (wakeWordWithId, processor) ->
                 try {
                     val score = processor.process(audioFeatures)
-                    frameScores[model.name] = score
+                    frameScores[wakeWordWithId.id] = score
                     val smoothedScore = updateSmoothedScore(
-                        modelName = model.name,
+                        modelName = wakeWordWithId.id,
                         score = score,
                         windowSize = config.experimentalMwwSmoothingWindow
                     )
                     val shouldTrigger = evaluateTrigger(
-                        modelName = model.name,
+                        modelName = wakeWordWithId.id,
                         smoothedScore = smoothedScore,
-                        threshold = model.threshold,
+                        threshold = config.wakeWordThreshold,
                         requiredHits = config.experimentalMwwConsecutiveHits,
                         cooldownMs = resolveOwwCooldownMs(),
                         nowMs = timestamp
@@ -271,14 +271,6 @@ class OpenWakeWordEngine(
         }
         latestFrameScores = HashMap(frameScores)
         return detections
-    }
-
-    private fun isWakeWordDetected(probability: Float): Boolean {
-        if (probabilities.size == slidingWindowSize)
-            probabilities.removeFirst()
-        probabilities.add(probability)
-
-        return probabilities.size == slidingWindowSize && probabilities.average() > config.wakeWordThreshold
     }
 
     private fun updateSmoothedScore(modelName: String, score: Float, windowSize: Int): Float {
