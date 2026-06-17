@@ -22,7 +22,7 @@ class MicrophoneInput (
     val frameSize: Int = 0,
 ) : AutoCloseable {
     private var audioRecord: AudioRecord? = null
-    private var webRtcApmProcessor: WebRtcApmProcessor? = null
+    private var webRtcSdkAudioProcessor: WebRtcSdkAudioProcessor? = null
 
     private var aec: AcousticEchoCanceler? = null
     private var ns: NoiseSuppressor? = null
@@ -33,25 +33,43 @@ class MicrophoneInput (
     private val bufferSize =
         AudioRecord.getMinBufferSize(sampleRateInHz, channelConfig, audioFormat)
 
-    val isRecording get() = audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING
+    val isRecording
+        get() = if (useWebRtcApmBackend()) {
+            webRtcSdkAudioProcessor?.isRunning() == true
+        } else {
+            audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING
+        }
     val speex = SpeexProcessor(sampleRate = sampleRateInHz, frameSize = if (frameSize > 0) frameSize else bufferSize )
 
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     fun start() {
+        if (useWebRtcApmBackend()) {
+            if (webRtcSdkAudioProcessor == null) {
+                webRtcSdkAudioProcessor = WebRtcSdkAudioProcessor(
+                    context = config.context,
+                    sampleRateHz = sampleRateInHz,
+                    channels = 1,
+                    audioSource = audioSource,
+                    audioFormat = audioFormat
+                )
+            }
+
+            if (!isRecording) {
+                Timber.d(
+                    "Starting microphone source=%d backend=%s webrtc_sdk=true",
+                    audioSource,
+                    config.experimentalAudioBackend
+                )
+                webRtcSdkAudioProcessor?.start()
+            } else {
+                Timber.w("Microphone already started")
+            }
+            return
+        }
+
         if (audioRecord == null) {
             audioRecord = createAudioRecord()
             setupAudioEffects()
-            if (useWebRtcApmBackend()) {
-                webRtcApmProcessor = WebRtcApmProcessor(
-                    enabled = true,
-                    sampleRateHz = sampleRateInHz,
-                    channels = 1,
-                    suppressionLevel = 3,
-                    postGain = resolveWebRtcPostGain(),
-                    vadEnabled = true,
-                    vadMode = 3
-                )
-            }
         }
 
         if (!isRecording) {
@@ -81,13 +99,15 @@ class MicrophoneInput (
 
     fun readShort(bufferSize: Int = VACAAudioFormat.DEFAULT_BUFFER_SIZE_IN_SHORTS, useSpeex: Boolean = true): ShortArray {
         val audioBuffer = ShortArray(bufferSize)
+        if (useWebRtcApmBackend()) {
+            val sdkSamples = webRtcSdkAudioProcessor?.readSamples(bufferSize) ?: ShortArray(0)
+            return if (sdkSamples.isNotEmpty()) sdkSamples else ShortArray(0)
+        }
+
         val audioRecord = this.audioRecord ?: error("Microphone not started")
         val readCount = audioRecord.read(audioBuffer, 0, audioBuffer.size)
         if (readCount > 0) {
             val raw = audioBuffer.copyOfRange(0, readCount)
-            if (useWebRtcApmBackend()) {
-                return webRtcApmProcessor?.process(raw) ?: raw
-            }
             if (useSpeex && !AutomaticGainControl.isAvailable()) {
                 speex.echoSuppressionEnabled = false
                 speex.denoiseEnabled = false
@@ -101,13 +121,6 @@ class MicrophoneInput (
 
     private fun useWebRtcApmBackend(): Boolean {
         return config.experimentalAudioBackend.equals(APPConfig.AUDIO_BACKEND_WEBRTC_APM, ignoreCase = true)
-    }
-
-    private fun resolveWebRtcPostGain(): Float {
-        // Reuse existing mic gain control to provide makeup gain after WebRTC NS.
-        // Keeps the same user tuning surface while preventing extreme clipping.
-        //return (1.5f + (config.micGain.coerceAtLeast(0) * 0.45f)).coerceIn(1.5f, 6.0f)
-        return (8.0f + (config.micGain.coerceAtLeast(0) * 1.2f)).coerceIn(8.0f, 24.0f)
     }
 
     fun readFloat(bufferSize: Int = VACAAudioFormat.DEFAULT_BUFFER_SIZE_IN_SHORTS): FloatArray {
@@ -168,8 +181,8 @@ class MicrophoneInput (
         ns?.release()
         ns = null
 
-        webRtcApmProcessor?.close()
-        webRtcApmProcessor = null
+        webRtcSdkAudioProcessor?.close()
+        webRtcSdkAudioProcessor = null
 
         audioRecord?.let {
             if (isRecording) {

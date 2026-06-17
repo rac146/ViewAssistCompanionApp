@@ -41,6 +41,7 @@ ksp = "2.3.6"
 hilt = "2.59.2"
 datastoreCore = "1.2.1"
 faceDetection = "16.1.7"
+webrtcSdkAndroid = "144.7559.05"
 
 
 
@@ -98,6 +99,7 @@ hilt-android-compiler = { module = "com.google.dagger:hilt-android-compiler", ve
 hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }
 androidx-datastore-core = { group = "androidx.datastore", name = "datastore-core", version.ref = "datastoreCore" }
 mlkit-face-detection = { group = "com.google.mlkit", name = "face-detection", version.ref = "faceDetection" }
+webrtc-sdk-android = { module = "io.github.webrtc-sdk:android", version.ref = "webrtcSdkAndroid" }
 
 
 

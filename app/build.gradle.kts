@@ -42,11 +42,6 @@ android {
         versionName = "0.12.0"
         versionCode = code
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        externalNativeBuild {
-            cmake {
-                cppFlags += ""
-            }
-        }
     }
 
     signingConfigs {
@@ -83,12 +78,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
-    }
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
@@ -169,6 +158,7 @@ dependencies {
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.ui.compose)
     implementation(libs.mlkit.face.detection)
+    implementation(libs.webrtc.sdk.android)
     implementation(libs.jtransforms)
     implementation(libs.hilt.android)
     ksp(libs.hilt.android.compiler)
