@@ -29,8 +29,6 @@ import java.lang.System
 @Composable
 fun DiagnosticBar(
     diagnosticInfo: DiagnosticInfo,
-    onEnrollSpeakerClick: (() -> Unit)? = null,
-    onClearSpeakerEnrollmentClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val configuration = LocalConfiguration.current
@@ -82,9 +80,7 @@ fun DiagnosticBar(
                     }
                 }
                 DiagnosticChips(
-                    diagnosticInfo = diagnosticInfo,
-                    onEnrollSpeakerClick = onEnrollSpeakerClick,
-                    onClearSpeakerEnrollmentClick = onClearSpeakerEnrollmentClick
+                    diagnosticInfo = diagnosticInfo
                 )
             }
         } else {
@@ -127,9 +123,7 @@ fun DiagnosticBar(
                     modifier = Modifier.padding(start = 10.dp)
                 ) {
                     DiagnosticChips(
-                        diagnosticInfo = diagnosticInfo,
-                        onEnrollSpeakerClick = onEnrollSpeakerClick,
-                        onClearSpeakerEnrollmentClick = onClearSpeakerEnrollmentClick
+                        diagnosticInfo = diagnosticInfo
                     )
                 }
             }
@@ -163,9 +157,7 @@ private fun MotionIndicator(diagnosticInfo: DiagnosticInfo) {
 
 @Composable
 private fun DiagnosticChips(
-    diagnosticInfo: DiagnosticInfo,
-    onEnrollSpeakerClick: (() -> Unit)? = null,
-    onClearSpeakerEnrollmentClick: (() -> Unit)? = null
+    diagnosticInfo: DiagnosticInfo
 ) {
     val configuration = LocalConfiguration.current
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
@@ -198,36 +190,9 @@ private fun DiagnosticChips(
                     labelColor = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             )
-            if (diagnosticInfo.hasSpeakerEnrollment && onClearSpeakerEnrollmentClick != null) {
-                AssistChip(
-                    onClick = { onClearSpeakerEnrollmentClick() },
-                    label = { Text("Remove Speaker") },
-                    colors = AssistChipDefaults.assistChipColors(
-                        labelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                )
-            }
         }
     } else {
         Column {
-                if (onEnrollSpeakerClick != null) {
-                    AssistChip(
-                        onClick = { onEnrollSpeakerClick() },
-                        label = { Text("Enroll Speaker") },
-                        colors = AssistChipDefaults.assistChipColors(
-                            labelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    )
-                }
-            if (diagnosticInfo.hasSpeakerEnrollment && onClearSpeakerEnrollmentClick != null) {
-                AssistChip(
-                    onClick = { onClearSpeakerEnrollmentClick() },
-                    label = { Text("Remove Speaker") },
-                    colors = AssistChipDefaults.assistChipColors(
-                        labelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                )
-            }
             AssistChip(
                 onClick = {},
                 label = { Text(if (diagnosticInfo.engine != "") diagnosticInfo.engine else "Disabled") },
@@ -270,8 +235,7 @@ fun DiagnosticBarPreview() {
             lastMotionTimestamp = System.currentTimeMillis(),
             motionInterval = 10000,
             motionDetectionMode = "face"
-        ),
-        onEnrollSpeakerClick = {}
+        )
     )
 }
 

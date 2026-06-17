@@ -197,7 +197,8 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
 
         config.speakerVerificationEmbeddingPath = ""
         config.speakerVerificationEnabled = false
-        toast(if (deletedAny) "Speaker enrollment removed" else "No speaker enrollment found")
+        val message = if (deletedAny) "Speaker enrollment removed" else "No speaker enrollment found"
+        postEnrollmentStatus(message, toast = true)
     }
 
     fun start() = flow {
@@ -639,7 +640,7 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
         val utterance = flattenFrames(state.currentFrames)
         if (utterance.isNotEmpty()) {
             state.utterances.add(utterance)
-            toast("Captured sample ${state.utterances.size}/${state.targetSamples}.")
+            postEnrollmentStatus("Enrollment progress: ${state.utterances.size}/${state.targetSamples} captured")
         }
 
         if (state.utterances.size >= state.targetSamples) {
@@ -654,25 +655,28 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
         state.speechFrames = 0
         state.silenceFrames = 0
         state.totalFrames = 0
-        toast("Wait for beep. Say '${config.wakeWord}' again.")
+        postEnrollmentStatus("Ready for next sample. Wait for beep, then say '${config.wakeWord}'.")
     }
 
     private fun beginSpeakerEnrollment() {
         speakerEnrollmentRequested = false
         if (enrollmentState != null) {
-            toast("Speaker enrollment already in progress")
+            postEnrollmentStatus("Speaker enrollment already in progress", toast = true)
             return
         }
 
         val modelPath = config.speakerVerificationModelPath.trim()
         if (modelPath.isEmpty()) {
-            toast("Speaker enrollment: model path is missing")
+            postEnrollmentStatus("Speaker enrollment failed: model path is missing", toast = true, error = true)
             return
         }
 
         enrollmentState = SpeakerEnrollmentState(targetSamples = 10)
         armEnrollmentForNextSample()
-        toast("Speaker enrollment started. Wait for beep, then say '${config.wakeWord}' clearly 10 times.")
+        postEnrollmentStatus(
+            "Speaker enrollment started. Wait for beep, then say '${config.wakeWord}' clearly 10 times.",
+            toast = true
+        )
     }
 
     private fun armEnrollmentForNextSample() {
@@ -697,7 +701,7 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
 
         val configuredModelPath = config.speakerVerificationModelPath.trim()
         if (configuredModelPath.isEmpty()) {
-            toast("Speaker enrollment failed: model path is missing")
+            postEnrollmentStatus("Speaker enrollment failed: model path is missing", toast = true, error = true)
             return
         }
 
@@ -705,7 +709,7 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
             resolveSpeakerModelFilePath(configuredModelPath)
         } catch (t: Throwable) {
             Timber.w(t, "Speaker enrollment model resolve failed")
-            toast("Speaker enrollment failed: model path error")
+            postEnrollmentStatus("Speaker enrollment failed: model path error", toast = true, error = true)
             return
         }
 
@@ -719,7 +723,7 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
             SpeakerEmbeddingExtractor(null, extractorConfig)
         } catch (t: Throwable) {
             Timber.w(t, "Speaker enrollment extractor init failed")
-            toast("Speaker enrollment failed: extractor init error")
+            postEnrollmentStatus("Speaker enrollment failed: extractor init error", toast = true, error = true)
             return
         }
 
@@ -736,13 +740,13 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
             }
 
             if (embeddings.isEmpty()) {
-                toast("Speaker enrollment failed: no valid samples")
+                postEnrollmentStatus("Speaker enrollment failed: no valid samples", toast = true, error = true)
                 return
             }
 
             val averaged = averageNormalizedEmbeddings(embeddings)
             if (averaged.isEmpty()) {
-                toast("Speaker enrollment failed: invalid embedding")
+                postEnrollmentStatus("Speaker enrollment failed: invalid embedding", toast = true, error = true)
                 return
             }
 
@@ -760,10 +764,10 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
                 state.utterances.size,
                 totalMs
             )
-            toast("Speaker enrollment complete (${embeddings.size} samples)")
+            postEnrollmentStatus("Speaker enrollment complete (${embeddings.size} samples)", toast = true)
         } catch (t: Throwable) {
             Timber.w(t, "Speaker enrollment processing failed")
-            toast("Speaker enrollment failed: processing error")
+            postEnrollmentStatus("Speaker enrollment failed: processing error", toast = true, error = true)
         } finally {
             runCatching { extractor.release() }
         }
@@ -863,8 +867,17 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
         return sqrt(sum / frame.size).toFloat()
     }
 
-    private fun toast(message: String) {
-        config.eventBroadcaster.notifyEvent(Event("showToastMessage", "", message))
+    private fun postEnrollmentStatus(message: String, toast: Boolean = false, error: Boolean = false) {
+        config.eventBroadcaster.notifyEvent(Event("speakerEnrollmentStatus", "", message))
+        if (toast) {
+            config.eventBroadcaster.notifyEvent(
+                Event(
+                    if (error) "showToastError" else "showToastMessage",
+                    "",
+                    message
+                )
+            )
+        }
     }
 
     private fun playPreVerificationBeep() {

@@ -135,7 +135,8 @@ data class State(
     var customFiles: CustomFilesState = CustomFilesState(),
     var cameraStreamActive: Boolean = false,
     var motionDetectionSensitivity: Int = 0,
-    var motionDetectionMode: String = "motion"
+    var motionDetectionMode: String = "motion",
+    var speakerEnrollmentStatus: String = ""
     )
 
 @HiltViewModel
@@ -252,6 +253,13 @@ class VAViewModel @Inject constructor(
                         diagnosticInfo = currentState.diagnosticInfo.copy(
                             hasSpeakerEnrollment = hasSpeakerEnrollment()
                         )
+                    )
+                }
+            }
+            "speakerEnrollmentStatus" -> {
+                _vacaState.update { currentState ->
+                    currentState.copy(
+                        speakerEnrollmentStatus = event.newValue as String
                     )
                 }
             }
@@ -568,10 +576,16 @@ class VAViewModel @Inject constructor(
     }
 
     fun startSpeakerEnrollment() {
+        _vacaState.update { currentState ->
+            currentState.copy(speakerEnrollmentStatus = "Starting enrollment...")
+        }
         config.eventBroadcaster.notifyEvent(Event("speakerEnrollmentStart", "", ""))
     }
 
     fun clearSpeakerEnrollment() {
+        _vacaState.update { currentState ->
+            currentState.copy(speakerEnrollmentStatus = "")
+        }
         config.eventBroadcaster.notifyEvent(Event("speakerEnrollmentClear", "", ""))
     }
 
