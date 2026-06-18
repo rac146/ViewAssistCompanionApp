@@ -79,9 +79,7 @@ fun DiagnosticBar(
                         MotionIndicator(diagnosticInfo)
                     }
                 }
-                DiagnosticChips(
-                    diagnosticInfo = diagnosticInfo
-                )
+                DiagnosticChips(diagnosticInfo)
             }
         } else {
             Row(
@@ -122,9 +120,7 @@ fun DiagnosticBar(
                 Column(
                     modifier = Modifier.padding(start = 10.dp)
                 ) {
-                    DiagnosticChips(
-                        diagnosticInfo = diagnosticInfo
-                    )
+                    DiagnosticChips(diagnosticInfo)
                 }
             }
         }
@@ -156,9 +152,7 @@ private fun MotionIndicator(diagnosticInfo: DiagnosticInfo) {
 }
 
 @Composable
-private fun DiagnosticChips(
-    diagnosticInfo: DiagnosticInfo
-) {
+private fun DiagnosticChips(diagnosticInfo: DiagnosticInfo) {
     val configuration = LocalConfiguration.current
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
 
