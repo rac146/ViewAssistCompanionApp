@@ -210,6 +210,10 @@ class APPConfig @Inject constructor(val context: Context) {
         onValueChangedListener(property, oldValue, newValue)
     }
 
+    var debugWakeClipDumpEnabled: Boolean by Delegates.observable(false) { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
     var pairedDeviceID: String by Delegates.observable(pairedDeviceId) { property, oldValue, newValue ->
         pairedDeviceId = newValue
         onValueChangedListener(property, oldValue, newValue)
@@ -361,6 +365,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["do_not_disturb"]?.jsonPrimitive?.booleanOrNull?.let { doNotDisturb = it }
         settings["dark_mode"]?.jsonPrimitive?.booleanOrNull?.let { darkMode = it }
         settings["diagnostics_enabled"]?.jsonPrimitive?.booleanOrNull?.let { diagnosticsEnabled = it }
+        settings["debug_wake_clip_dump_enabled"]?.jsonPrimitive?.booleanOrNull?.let { debugWakeClipDumpEnabled = it }
         settings["integration_version"]?.jsonPrimitive?.contentOrNull?.let { integrationVersion = it }
         settings["min_required_apk_version"]?.jsonPrimitive?.contentOrNull?.let { minRequiredApkVersion = it }
         settings["zoom_level"]?.jsonPrimitive?.intOrNull?.let { zoomLevel = it }

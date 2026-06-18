@@ -894,6 +894,7 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
     }
 
     private fun queueVerificationClipWavDump(detection: WakeWordEngineProvider.WakeWordDetection, audio: FloatArray) {
+        if (!config.debugWakeClipDumpEnabled) return
         if (audio.isEmpty()) return
         val copy = audio.copyOf()
         wakeClipDumpScope.launch {
@@ -902,6 +903,7 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
     }
 
     private fun queueEnrollmentWavDump(utterances: List<FloatArray>, wakeWord: String) {
+        if (!config.debugWakeClipDumpEnabled) return
         if (utterances.isEmpty()) return
         val copies = utterances.map { it.copyOf() }
         val wakeLabel = wakeWord
