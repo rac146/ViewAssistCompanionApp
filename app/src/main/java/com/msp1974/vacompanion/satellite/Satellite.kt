@@ -479,6 +479,12 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
             }
 
             override fun onFinish(reason: PipelineEndReason, continueConversation: Boolean) {
+                if (reason != PipelineEndReason.END_OF_PIPELINE || !continueConversation) {
+                    if (audioPipeline === this) {
+                        audioPipeline = null
+                    }
+                }
+
                 if (reason == PipelineEndReason.END_OF_PIPELINE) {
                     Timber.i("Pipeline ended.  Restarting: $continueConversation")
                     if (continueConversation) {
@@ -488,8 +494,6 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
                             }
                             startAudioPipeline(PipelineStartMode.CONTINUE_CONVERSATION)
                         }
-                    } else {
-                        audioPipeline = null
                     }
                 }
                 if (reason == PipelineEndReason.ERRORED && config.wakeWordSound != "none") {

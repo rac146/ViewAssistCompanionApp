@@ -105,10 +105,6 @@ class SatelliteCustomEventHandler(
                 if (errorText.isNotEmpty()) {
                     config.eventBroadcaster.notifyEvent(Event("showToastError", "", errorText))
                 }
-
-                if (config.wakeWordSound != "none") {
-                    satellite.playErrorSound()
-                }
                 //audioRoute = AudioRouteOption.DETECT
                 satellite.sendDiagnostics(0f, 0f)
             }
