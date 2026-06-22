@@ -23,6 +23,7 @@ import kotlin.io.path.exists
 
 enum class WakeWordType {
     OPENWAKEWORD,
+    OPENWAKEWORD_RT,
     MICROWAKEWORD
 }
 
@@ -76,7 +77,7 @@ class CustomFileDownloader(private val context: Context, val config: APPConfig) 
         val dir = File("${context.filesDir}/$CUSTOM_DIR/$SOUNDS_DIR")
         if (!dir.exists() || !dir.isDirectory) return emptyList()
         return dir.listFiles()?.map { file ->
-            val id = file.nameWithoutExtension
+            val id = file.nameWithoutExtension.lowercase()
             AvailableWakeSound(
                 id = id,
                 name = formatDisplayName(id),
@@ -93,7 +94,7 @@ class CustomFileDownloader(private val context: Context, val config: APPConfig) 
         val dir = File("${context.filesDir}/$CUSTOM_DIR/$ALARMS_DIR")
         if (!dir.exists() || !dir.isDirectory) return emptyList()
         return dir.listFiles()?.map { file ->
-            val id = file.nameWithoutExtension
+            val id = file.nameWithoutExtension.lowercase()
             AvailableAlarm(
                 id = id,
                 name = formatDisplayName(id),
@@ -116,7 +117,8 @@ class CustomFileDownloader(private val context: Context, val config: APPConfig) 
         val fileNameBase = name.split(".")[0]
         val files = when(type) {
             WakeWordType.MICROWAKEWORD -> listOf("$fileNameBase.json", "$fileNameBase.tflite")
-            WakeWordType.OPENWAKEWORD -> listOf("$fileNameBase.onnx", "$fileNameBase.tflite")
+            WakeWordType.OPENWAKEWORD -> listOf("$fileNameBase.onnx")
+            WakeWordType.OPENWAKEWORD_RT -> listOf("$fileNameBase.tflite")
         }
         var allDeleted = true
         for (file in files) {
@@ -143,11 +145,12 @@ class CustomFileDownloader(private val context: Context, val config: APPConfig) 
         val fileNameBase = name.split(".")[0]
         val extensions = customExtensions ?: when(wakeWordType) {
             WakeWordType.MICROWAKEWORD -> listOf("json", "tflite")
-            WakeWordType.OPENWAKEWORD -> listOf("onnx", "tflite")
+            WakeWordType.OPENWAKEWORD -> listOf("onnx")
+            WakeWordType.OPENWAKEWORD_RT -> listOf("tflite")
         }
 
         val baseUrl = AuthUtils.getHAUrl(config, false)
-        val urlBase = URL(URL(baseUrl), "vaca/$CUSTOM_DIR/${wakeWordType.toString().lowercase()}/")
+        val urlBase = URL(URL(baseUrl), "vaca/$CUSTOM_DIR/${wakeWordType.toString().lowercase().replace("_rt","")}/")
 
         for (ext in extensions) {
             val file = "$fileNameBase.$ext"
@@ -245,4 +248,11 @@ class CustomFileDownloader(private val context: Context, val config: APPConfig) 
         return getDownloadedWakeWordFile(type, fileName)?.delete() ?: false
     }
 
+    /**
+     * Deletes all files in the custom directory.
+     */
+    fun clearAllCustomFiles(): Boolean {
+        val dir = File("${context.filesDir}/$CUSTOM_DIR")
+        return if (dir.exists()) dir.deleteRecursively() else true
+    }
 }

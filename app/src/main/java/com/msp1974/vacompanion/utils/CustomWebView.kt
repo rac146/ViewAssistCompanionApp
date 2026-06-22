@@ -77,6 +77,8 @@ class CustomWebView @JvmOverloads constructor(
             webChromeClient = CustomWebChromeClient(context)
         }
 
+        refreshDarkMode(config.darkMode)
+
         // Add JS interfaces
         removeJavascriptInterface("Android")
         addJavascriptInterface(androidInterface, "Android")
@@ -104,31 +106,37 @@ class CustomWebView @JvmOverloads constructor(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        gestureDetector.onTouchEvent(event, height)
+        val gestureHandled = gestureDetector.onTouchEvent(event, height)
         if (requestDisallow) {
             requestDisallowInterceptTouchEvent(true)
         }
         when (event.actionMasked) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> requestDisallow = false
         }
+
+        //Prevent scrolling if more than 1 finger is used
+        if (event.pointerCount > 1 || gestureHandled) {
+            return true
+        }
+
         return super.onTouchEvent(event)
     }
 
-    fun refreshDarkMode() {
-        val nightModeFlag = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
-        if (nightModeFlag == Configuration.UI_MODE_NIGHT_YES) {
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
-                WebSettingsCompat.setForceDark(
-                    settings,
-                    WebSettingsCompat.FORCE_DARK_ON
-                )
-            }
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK_STRATEGY)) {
-                WebSettingsCompat.setForceDarkStrategy(
-                    settings,
-                    DARK_STRATEGY_PREFER_WEB_THEME_OVER_USER_AGENT_DARKENING
-                )
-            }
+    fun refreshDarkMode(isDark: Boolean) {
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, isDark)
+        } else if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
+            WebSettingsCompat.setForceDark(
+                settings,
+                if (isDark) WebSettingsCompat.FORCE_DARK_ON else WebSettingsCompat.FORCE_DARK_OFF
+            )
+        }
+
+        if (isDark && WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK_STRATEGY)) {
+            WebSettingsCompat.setForceDarkStrategy(
+                settings,
+                DARK_STRATEGY_PREFER_WEB_THEME_OVER_USER_AGENT_DARKENING
+            )
         }
     }
 

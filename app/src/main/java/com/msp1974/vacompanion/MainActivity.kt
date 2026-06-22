@@ -42,7 +42,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.core.app.ActivityCompat
@@ -83,10 +82,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import java.time.Instant
-import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import kotlin.getValue
+import kotlin.time.Duration.Companion.seconds
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
@@ -112,6 +110,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
     private var screenOffStartUp: Boolean = false
     private var screenOffInProgress: Boolean = false
     private var screenModeJob: Job? = null
+    private var screenDelayJob: Job? = null
     private var lastScreenStateEvent: Long = 0
     private var motionDetected: Boolean = false
     private val snackbarHostState = SnackbarHostState()
@@ -176,15 +175,13 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
 
         setContent {
             val vaUiState by viewModel.vacaState.collectAsState()
-            AppTheme(darkMode = false, dynamicColor = false) {
+            AppTheme(darkMode = vaUiState.darkMode, dynamicColor = false) {
                 Scaffold(
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     containerColor = Color.Black
                 ) { padding ->
                     Surface(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(padding),
+                        modifier = Modifier.fillMaxSize(),
                         color = Color.Black
                     ) {
                         when {
@@ -197,12 +194,17 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                                             viewModel = viewModel,
                                             onClose = {
                                                 viewModel.setShowMenu(false)
-                                            }
+                                            },
+                                            modifier = Modifier.padding(padding)
                                         )
                                     }
                                 }
                             }
-                            else -> ConnectionScreen()
+                            else -> {
+                                Box(modifier = Modifier.padding(padding)) {
+                                    ConnectionScreen()
+                                }
+                            }
                         }
 
                         when {
@@ -556,17 +558,13 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 when (event.eventName) {
                     "screenAlwaysOn" -> {
                         val enabled = event.newValue as Boolean
-                        //if (enabled) {
-                            //screenWake()
-                        //}
                         screen.setScreenAlwaysOn(window, enabled)
                     }
                     "screenAutoBrightness" -> {
+                        val enabled = event.newValue as Boolean
                         if (screen.isScreenOn() and !viewModel.vacaState.value.screenBlank) {
-                            screen.setScreenAutoBrightness(
-                                window,
-                                event.newValue as Boolean
-                            )
+                            screen.setScreenAutoBrightness(enabled)
+                            if (!enabled) screen.setScreenBrightness(window, config.screenBrightness)
                         }
                     }
                     "screenBrightness" -> {
@@ -575,6 +573,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                         }
                     }
                     "screenTimeout" -> screen.setScreenTimeout(config.screenTimeout)
+                    "hideSystemUI" -> screen.hideSystemUI(window)
                     else -> consumed = false
                 }
             }
@@ -589,8 +588,6 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 "textSize" -> webView.setTextSize(event.newValue as Int)
                 "darkMode" -> setDarkMode(event.newValue as Boolean)
                 "refresh" -> webView.refresh()
-                "screenWake" -> applyScreenMode(ScreenOnMode.ON)
-                "screenSleep" -> applyScreenMode(ScreenOnMode.OFF)
                 "screenOn" -> handleScreenOnChange(event.newValue as Boolean)
                 "screenSaver" -> onScreenSaver(event.newValue as Boolean)
                 "screenOrientationMode" -> screen.setScreenOrientation(this@MainActivity, event.newValue as String)
@@ -613,9 +610,16 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
 
     fun handleScreenOnChange(screenOn: Boolean) {
         val now = System.currentTimeMillis()
-        if (now - lastScreenStateEvent > 1000) {
+        if (now - lastScreenStateEvent > 5000) {
             if (screen.isScreenOn() != screenOn) {
                 applyScreenMode(if (screenOn) ScreenOnMode.ON else ScreenOnMode.OFF)
+                lastScreenStateEvent = now
+            }
+        } else {
+            if (screenDelayJob != null && screenDelayJob!!.isActive) screenDelayJob!!.cancel()
+            screenDelayJob = lifecycleScope.launch {
+                delay(2.seconds)
+                applyScreenMode(if (config.screenOn) ScreenOnMode.ON else ScreenOnMode.OFF)
                 lastScreenStateEvent = now
             }
         }
@@ -660,7 +664,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             uiModeManager.nightMode = if (isDark) UiModeManager.MODE_NIGHT_YES else UiModeManager.MODE_NIGHT_NO
         }
 
-        webView.refreshDarkMode()
+        webView.refreshDarkMode(isDark)
     }
 
     private fun showSnackbar(message: String) {

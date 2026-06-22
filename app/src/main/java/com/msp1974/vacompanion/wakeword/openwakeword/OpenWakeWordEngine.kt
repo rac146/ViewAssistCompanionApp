@@ -169,12 +169,10 @@ class OpenWakeWordEngine(
     override fun start() = muted.flatMapLatest {
         if (it) emptyFlow()
         else flow {
+            val wakeWords = activeWakeWords
             val audioSource = if(isAndroidThings) VACAAudioFormat.FALLBACK_AUDIO_SOURCE else VACAAudioFormat.DEFAULT_AUDIO_SOURCE
             val microphoneInput = MicrophoneInput(config, audioSource, frameSize = 1280)
             try {
-                // Create detectors here
-
-
                 microphoneInput.start()
                 emit(AudioResult.EngineStatus("Started"))
                 while (true) {
@@ -198,14 +196,16 @@ class OpenWakeWordEngine(
                         )
 
                         for (detection in detections) {
-                            if (detection.detected) {
-                                Timber.i(
+                            if (detection.score > 0.1f) {
+                                if (detection.wakeWordId in wakeWords) {
+                                    Timber.i(
                                     "OWW trigger detected wake='%s' score=%.4f ts=%d",
                                     detection.wakeWord,
                                     detection.score,
                                     detection.timestamp
                                 )
-                                emit(AudioResult.WakeDetected(detection))
+                                emit(AudioResult.WakeDetected(detection.copy(timestamp = frameTimestamp)))
+                                }
                             }
                         }
                     }

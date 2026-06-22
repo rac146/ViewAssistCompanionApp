@@ -119,7 +119,6 @@ class MusicPlayerService() : Service() {
                     player.play()
                 }
             }
-            animateUnDuckingVolume()
         }
     }
 
@@ -157,26 +156,22 @@ class MusicPlayerService() : Service() {
                 when (focusChange) {
                     AudioManager.AUDIOFOCUS_GAIN -> {
                         hasAudioFocus = true
-                        Timber.d("Music player: Audio focus restored")
-                        resume()
+                        unDuckVolume()
                     }
 
                     AudioManager.AUDIOFOCUS_LOSS -> {
                         hasAudioFocus = false
-                        //pause()
+                        duckVolume(true)
                     }
 
                     AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                         hasAudioFocus = false
-                        pause()
+                        duckVolume(true)
                     }
 
                     AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                         hasAudioFocus = false
-                        val duckVolume = getDuckingVolume()
-                        Timber.d("Music player: Ducking volume to $duckVolume")
-                        mediaPlayer?.volume = duckVolume
-                        ducked = true
+                        duckVolume()
                     }
                 }
             }
@@ -190,6 +185,23 @@ class MusicPlayerService() : Service() {
 
     private fun getDuckingVolume(): Float {
         return min(config.duckingVolume / 50f, musicVolume)
+    }
+
+    private fun duckVolume(silence: Boolean = false) {
+        val duckVolume = if (silence) 0f else getDuckingVolume()
+        Timber.d("Music player: Ducking volume to $duckVolume")
+        mediaPlayer?.volume = duckVolume
+        ducked = true
+    }
+
+    private fun unDuckVolume(animate: Boolean = true) {
+        if (mediaPlayer?.volume == musicVolume) return
+        if (animate) {
+            animateUnDuckingVolume()
+        } else {
+            mediaPlayer?.volume = musicVolume
+        }
+        ducked = false
     }
 
     private fun animateUnDuckingVolume (

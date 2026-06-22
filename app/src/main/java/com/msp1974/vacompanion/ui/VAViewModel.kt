@@ -103,9 +103,11 @@ data class DiagnosticInfo(
 data class CustomFilesState(
     val microWakeWords: List<String> = emptyList(),
     val openWakeWords: List<String> = emptyList(),
+    val openWakeWordsRT: List<String> = emptyList(),
     val sounds: List<AvailableWakeSound> = emptyList(),
     val alarms: List<AvailableAlarm> = emptyList(),
     val isDownloading: Boolean = false,
+    val isSyncing: Boolean = false,
     val downloadName: String = "",
     val downloadProgress: Int = 0
 )
@@ -132,6 +134,7 @@ data class State(
     var webViewPageLoadingStage: PageLoadingStage = PageLoadingStage.NOT_STARTED,
     var showUUIDChangeDialog: Boolean = false,
     var isNetworkConnected: Boolean = true,
+    var showSettings: Boolean = false,
     var customFiles: CustomFilesState = CustomFilesState(),
     var cameraStreamActive: Boolean = false,
     var motionDetectionSensitivity: Int = 0,
@@ -404,6 +407,7 @@ class VAViewModel @Inject constructor(
                 menuOpenedByAction = true
             )
         }
+        config.settingsOpen = true
     }
 
     fun setSatelliteRunning(isRunning: Boolean) {
@@ -455,6 +459,10 @@ class VAViewModel @Inject constructor(
 
     fun onGesture(gestureEvent: WebViewGestureDetector.GestureEvent) {
         config.eventBroadcaster.notifyEvent(Event("gesture", "", gestureEvent))
+    }
+
+    fun hideSystemUI() {
+        config.eventBroadcaster.notifyEvent(Event("hideSystemUI", "", ""))
     }
 
     private fun buildAppInfo() {
@@ -605,6 +613,16 @@ class VAViewModel @Inject constructor(
                 menuOpenedByAction = if (!show) false else currentState.menuOpenedByAction
             )
         }
+        config.settingsOpen = show
+    }
+
+    fun setShowSettings(show: Boolean) {
+        _vacaState.update { currentState ->
+            currentState.copy(
+                showSettings = show
+            )
+        }
+        config.settingsOpen = show
     }
 
     fun setCameraStreamActive(active: Boolean) {
@@ -631,6 +649,7 @@ class VAViewModel @Inject constructor(
                     customFiles = CustomFilesState(
                         microWakeWords = customFileDownloader.listCustomWakeWordModels(WakeWordType.MICROWAKEWORD),
                         openWakeWords = customFileDownloader.listCustomWakeWordModels(WakeWordType.OPENWAKEWORD),
+                        openWakeWordsRT = customFileDownloader.listCustomWakeWordModels(WakeWordType.OPENWAKEWORD_RT),
                         // For management UI, we only want to show custom files (not assets)
                         sounds = customFileDownloader.listAvailableCustomWakeSounds(),
                         alarms = customFileDownloader.listAvailableCustomAlarms()
@@ -650,10 +669,23 @@ class VAViewModel @Inject constructor(
 
     fun syncCustomFiles() {
         viewModelScope.launch {
-            val handler = SatelliteCustomFilesHandler(app, config, this@VAViewModel)
-            handler.syncAllCustomFiles()
-            refreshCustomFiles()
-            refreshAvailableWakeWords()
+            _vacaState.update { currentState ->
+                currentState.copy(
+                    customFiles = currentState.customFiles.copy(isSyncing = true)
+                )
+            }
+            try {
+                val handler = SatelliteCustomFilesHandler(app, config, this@VAViewModel)
+                handler.syncAllCustomFiles()
+                refreshCustomFiles()
+                refreshAvailableWakeWords()
+            } finally {
+                _vacaState.update { currentState ->
+                    currentState.copy(
+                        customFiles = currentState.customFiles.copy(isSyncing = false)
+                    )
+                }
+            }
         }
     }
 

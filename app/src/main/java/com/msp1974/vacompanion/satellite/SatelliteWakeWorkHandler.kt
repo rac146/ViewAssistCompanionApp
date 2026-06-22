@@ -84,7 +84,7 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
                 engine = WakeWordEngine(context, config,
                     when (config.wakeWordEngine) {
                         "openwakeword" -> WakeWordEngineModel.OPENWAKEWORD
-                        "openwakeword-rt" -> WakeWordEngineModel.OPENWAKEWORD_RT
+                        "openwakeword_rt" -> WakeWordEngineModel.OPENWAKEWORD_RT
                         else -> WakeWordEngineModel.MICROWAKEWORD
                     },
                     deviceInfo.software.isAndroidThings
@@ -155,18 +155,24 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
                         }
                     }
 
-                    is WakeWordEngineProvider.AudioResult.StopDetected -> {
-                        if (it.detection.detected) {
-                            Timber.d("Stop word detected: score: ${it.detection.score}")
-                            if (it.detection.score > 0.5) {
+                is WakeWordEngineProvider.AudioResult.StopDetected -> {
+                    if (it.detection.detected) {
+                        Timber.d("Stop word detected: score: ${it.detection.score}")
+                        if (it.detection.score > 0.5) {
+                            val now = System.currentTimeMillis()
+                            val lastDetection = detectionCooldowns[it.detection.wakeWordId]
+
+                            if (lastDetection == null || detectionCooldownMs == 0L || now - lastDetection >= detectionCooldownMs) {
                                 onStopWordDetected(it.detection)
                                 BroadcastSender.sendBroadcast(
                                     context,
                                     BroadcastSender.STOP_WORD_DETECTED
                                 )
+                                detectionCooldowns[it.detection.wakeWordId] = now
                             }
                         }
                     }
+                }
 
                     is WakeWordEngineProvider.AudioResult.Audio -> {
                         if (it.audio.size() > 0) {

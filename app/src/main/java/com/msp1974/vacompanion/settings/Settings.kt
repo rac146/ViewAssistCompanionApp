@@ -81,6 +81,7 @@ class APPConfig @Inject constructor(val context: Context) {
     var backgroundTaskStatus: BackgroundTaskStatus = BackgroundTaskStatus.NOT_STARTED
     var isRunning: Boolean = false
     var cameraStreamActive: Boolean = false
+    var settingsOpen: Boolean = false
 
     var hasRecordAudioPermission: Boolean = false
     var hasPostNotificationPermission: Boolean = false

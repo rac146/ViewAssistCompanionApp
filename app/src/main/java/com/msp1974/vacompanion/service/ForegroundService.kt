@@ -200,6 +200,12 @@ class VAForegroundService @Inject constructor() : LifecycleService() {
         Manifest.permission.RECORD_AUDIO
     ) == PackageManager.PERMISSION_GRANTED
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Timber.i("onTaskRemoved - stopping service")
+        stopSelf()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         Timber.i("Stopping Background Service")

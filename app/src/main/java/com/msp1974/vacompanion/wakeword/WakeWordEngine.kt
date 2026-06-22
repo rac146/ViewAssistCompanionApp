@@ -68,7 +68,7 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
     )
 
     private suspend fun get(): WakeWordEngineProvider? {
-        Timber.i("Starting ${config.wakeWordEngine} wake word engine")
+        Timber.i("Starting $engine wake word engine")
 
 
         if (config.availableWakeWords == null) {
