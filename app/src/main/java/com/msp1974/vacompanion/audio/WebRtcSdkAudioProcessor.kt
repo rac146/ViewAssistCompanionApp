@@ -26,6 +26,7 @@ class WebRtcSdkAudioProcessor(
     private val channels: Int = 1,
     private val audioSource: Int = VACAAudioFormat.DEFAULT_AUDIO_SOURCE,
     private val audioFormat: Int = VACAAudioFormat.ENCODING,
+    private val manualGainMultiplierProvider: () -> Float = { 1.0f },
 ) : AutoCloseable {
     private val frameQueue = LinkedBlockingQueue<ShortArray>(96)
     private val bufferLock = Any()
@@ -102,6 +103,7 @@ class WebRtcSdkAudioProcessor(
 
                 val frame = toShortArray(buffer, expectedSamples, bytesRead)
                 if (frame.isNotEmpty()) {
+                    applyManualGainInPlace(frame, manualGainMultiplierProvider())
                     enqueueFrame(frame)
                     if (sampleRate != sampleRateHz || numberOfChannels != channels) {
                         Timber.v(
@@ -127,7 +129,6 @@ class WebRtcSdkAudioProcessor(
         val constraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
         }
 
@@ -242,6 +243,15 @@ class WebRtcSdkAudioProcessor(
                 frameQueue.size,
                 frame.size
             )
+        }
+    }
+
+    private fun applyManualGainInPlace(frame: ShortArray, gainMultiplier: Float) {
+        val gain = gainMultiplier.coerceIn(0.2f, 3.0f)
+        if (gain == 1.0f) return
+
+        for (i in frame.indices) {
+            frame[i] = (frame[i] * gain).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
         }
     }
 }

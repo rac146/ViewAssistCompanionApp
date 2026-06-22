@@ -50,7 +50,10 @@ class MicrophoneInput (
                     sampleRateHz = sampleRateInHz,
                     channels = 1,
                     audioSource = audioSource,
-                    audioFormat = audioFormat
+                    audioFormat = audioFormat,
+                    manualGainMultiplierProvider = {
+                        (1.0f + (config.micGain * 0.12f)).coerceIn(0.2f, 3.0f)
+                    }
                 )
             }
 
