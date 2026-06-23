@@ -236,18 +236,18 @@ class WebRtcSdkAudioProcessor(
             frameQueue.offer(frame)
         }
         val count = enqueuedFrameCount.incrementAndGet()
-        if (count % 200L == 0L) {
-            Timber.i(
-                "WebRTC SDK audio frames enqueued=%d queueSize=%d lastSamples=%d",
-                count,
-                frameQueue.size,
-                frame.size
-            )
-        }
+//        if (count % 200L == 0L) {
+//            Timber.i(
+//                "WebRTC SDK audio frames enqueued=%d queueSize=%d lastSamples=%d",
+//                count,
+//                frameQueue.size,
+//                frame.size
+//            )
+//        }
     }
 
     private fun applyManualGainInPlace(frame: ShortArray, gainMultiplier: Float) {
-        val gain = gainMultiplier.coerceIn(0.2f, 3.0f)
+        val gain = gainMultiplier.coerceIn(0.1f, 6.0f)
         if (gain == 1.0f) return
 
         for (i in frame.indices) {

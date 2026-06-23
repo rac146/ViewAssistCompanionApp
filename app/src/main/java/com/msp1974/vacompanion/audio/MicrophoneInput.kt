@@ -52,7 +52,10 @@ class MicrophoneInput (
                     audioSource = audioSource,
                     audioFormat = audioFormat,
                     manualGainMultiplierProvider = {
-                        (1.0f + (config.micGain * 0.12f)).coerceIn(0.2f, 3.0f)
+                        // Map micGain (-10..10) to a stronger dB-scale gain curve.
+                        // ~1.8 dB per step gives significantly more lift in noisy rooms.
+                        val gainDb = config.micGain * 1.8f
+                        Math.pow(10.0, (gainDb / 20.0).toDouble()).toFloat().coerceIn(0.1f, 6.0f)
                     }
                 )
             }

@@ -46,6 +46,8 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
     private val duplicateWakeSuppressionMs = 1200L
     private val wakeTriggerHistory = LinkedList<Pair<String, Long>>()
     private val speakerVerificationNumThreads = 2
+    private val enrollmentInitialDelayMs = 5000L
+    private val enrollmentInterSampleDelayMs = 1200L
     @Volatile private var speakerEnrollmentRequested = false
     private var enrollmentState: SpeakerEnrollmentState? = null
     private val wakeClipDumpScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -60,8 +62,13 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
         val targetSamples: Int,
         val utterances: MutableList<FloatArray> = mutableListOf(),
         val currentFrames: MutableList<FloatArray> = mutableListOf(),
+        val preSpeechBuffer: ArrayDeque<FloatArray> = ArrayDeque(),
         var startedSpeech: Boolean = false,
-        var armDelayFrames: Int = 0,
+        var armDelayUntilMs: Long = 0L,
+        var armBeepPending: Boolean = false,
+        var postBeepIgnoreUntilMs: Long = 0L,
+        var preSpeechFrames: Int = 0,
+        var noiseFloorEma: Float = 0.0045f,
         var speechFrames: Int = 0,
         var silenceFrames: Int = 0,
         var totalFrames: Int = 0,
@@ -447,6 +454,7 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
     private fun extractScoreBoundedAudioLocked(detection: WakeWordEngineProvider.WakeWordDetection): FloatArray {
         val frames = verificationRingBuffer.map { it.audio }
         val scoreFrames = verificationRingBuffer.map { it.scores }
+        val timestamps = verificationRingBuffer.map { it.timestamp }
         if (frames.isEmpty() || scoreFrames.isEmpty() || frames.size != scoreFrames.size) {
             return FloatArray(0)
         }
@@ -458,51 +466,45 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
         if (wakeKeys.isEmpty()) return FloatArray(0)
 
         val wakeScores = FloatArray(frames.size)
-        var peakIdx = -1
-        var peakScore = Float.NEGATIVE_INFINITY
         for (i in frames.indices) {
             val score = wakeKeys.maxOfOrNull { key -> scoreFrames[i][key] ?: 0f } ?: 0f
             wakeScores[i] = score
+        }
+
+        // Keep extraction local to detection time and use a fixed time window around
+        // peak/detection anchor for predictable "hey jarvis" capture.
+        val searchPreMs = 1700L
+        val searchPostMs = 180L
+        val searchMinTs = detection.timestamp - searchPreMs
+        val searchMaxTs = detection.timestamp + searchPostMs
+        val candidateIndices = timestamps.indices.filter { timestamps[it] in searchMinTs..searchMaxTs }
+        if (candidateIndices.isEmpty()) return FloatArray(0)
+
+        var peakIdx = -1
+        var peakScore = Float.NEGATIVE_INFINITY
+        for (i in candidateIndices) {
+            val score = wakeScores[i]
             if (score > peakScore) {
                 peakScore = score
                 peakIdx = i
             }
         }
-
         if (peakIdx < 0 || peakScore <= 0f) return FloatArray(0)
 
-        val boundary = (peakScore * 0.25f).coerceAtLeast(0.08f)
-        var lastStrongIdx = -1
-        for (i in wakeScores.lastIndex downTo 0) {
-            if (wakeScores[i] >= boundary) {
-                lastStrongIdx = i
-                break
-            }
-        }
-        if (lastStrongIdx < 0) return FloatArray(0)
+        val peakTs = timestamps[peakIdx]
+        val anchorTs = minOf(detection.timestamp, peakTs + 40L)
+        val clipPreMs = 860L
+        val clipPostMs = 120L
+        val minSamples = (config.sampleRate * 600) / 1000
+        val maxSamples = (config.sampleRate * 1200) / 1000
+        val targetStartTs = anchorTs - clipPreMs
+        val targetEndTs = anchorTs + clipPostMs
 
-        var startIdx = lastStrongIdx
-        var endIdx = lastStrongIdx
-        val maxBacktrackGapFrames = 2
-        var remainingGapFrames = maxBacktrackGapFrames
-        while (startIdx > 0) {
-            val prevScore = wakeScores[startIdx - 1]
-            if (prevScore >= boundary) {
-                startIdx--
-                remainingGapFrames = maxBacktrackGapFrames
-            } else if (remainingGapFrames > 0) {
-                startIdx--
-                remainingGapFrames--
-            } else {
-                break
-            }
-        }
-        if (startIdx > 0) startIdx--
+        var selectedIndices = timestamps.indices.filter { timestamps[it] in targetStartTs..targetEndTs }
+        if (selectedIndices.isEmpty()) return FloatArray(0)
 
-        val prePadSamples = (config.sampleRate * 500) / 1000
-        val postPadSamples = (config.sampleRate * 40) / 1000
-        val minSamples = (config.sampleRate * 450) / 1000
-        val maxSamples = (config.sampleRate * speakerVerificationMaxWindowMs.toInt()) / 1000
+        var startIdx = selectedIndices.first()
+        var endIdx = selectedIndices.last()
 
         fun sampleCount(from: Int, to: Int): Int {
             var total = 0
@@ -510,28 +512,16 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
             return total
         }
 
-        var addedPre = 0
-        while (startIdx > 0 && addedPre < prePadSamples) {
-            startIdx--
-            addedPre += frames[startIdx].size
-        }
-
-        var addedPost = 0
-        while (endIdx < frames.lastIndex && addedPost < postPadSamples) {
-            endIdx++
-            addedPost += frames[endIdx].size
-        }
-
         while (sampleCount(startIdx, endIdx) < minSamples && (startIdx > 0 || endIdx < frames.lastIndex)) {
             if (startIdx > 0) startIdx--
             if (sampleCount(startIdx, endIdx) < minSamples && endIdx < frames.lastIndex) endIdx++
         }
 
-        while (sampleCount(startIdx, endIdx) > maxSamples && (startIdx < lastStrongIdx || endIdx > lastStrongIdx)) {
-            if (endIdx > lastStrongIdx) {
-                endIdx--
-            } else if (startIdx < lastStrongIdx) {
+        while (sampleCount(startIdx, endIdx) > maxSamples && (startIdx < peakIdx || endIdx > peakIdx)) {
+            if (startIdx < peakIdx) {
                 startIdx++
+            } else if (endIdx > peakIdx) {
+                endIdx--
             } else {
                 break
             }
@@ -546,16 +536,18 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
             (flattened.size.toDouble() * 1000.0 / config.sampleRate.toDouble())
         } else 0.0
 
-        val scoreLogStart = maxOf(0, wakeScores.size - 20)
-        val scoreLog = (scoreLogStart until wakeScores.size)
+        // Log only the selected interval and non-trivial scores to avoid noisy 0.000 spam.
+        val scoreLog = (startIdx..endIdx)
+            .filter { wakeScores[it] >= 0.01f }
             .joinToString(separator = ",") { i -> "$i:${"%.3f".format(wakeScores[i])}" }
         Timber.i(
-            "Shared boundary debug wake='%s' peakScore=%.4f peakIdx=%d lastStrongIdx=%d boundary=%.4f startIdx=%d endIdx=%d frames=%d selectedSamples=%d selectedMs=%.1f scores=[%s]",
+            "Shared boundary debug wake='%s' peakScore=%.4f peakIdx=%d peakTs=%d detectTs=%d anchorTs=%d startIdx=%d endIdx=%d frames=%d selectedSamples=%d selectedMs=%.1f nonZeroScores=[%s]",
             detection.wakeWord,
             peakScore,
             peakIdx,
-            lastStrongIdx,
-            boundary,
+            peakTs,
+            detection.timestamp,
+            anchorTs,
             startIdx,
             endIdx,
             frames.size,
@@ -599,24 +591,61 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
 
         val state = enrollmentState ?: return
         val rms = frameRms(frame)
+        val nowMs = System.currentTimeMillis()
 
-        val speechStartThreshold = 0.015f
-        val speechEndThreshold = 0.010f
+        // Simple adaptive VAD for enrollment that tolerates higher mic gain.
+        val emaAlpha = 0.08f
+        if (!state.startedSpeech) {
+            val clampedRms = rms.coerceIn(0f, 0.08f)
+            state.noiseFloorEma = ((1f - emaAlpha) * state.noiseFloorEma) + (emaAlpha * clampedRms)
+        }
+        val speechStartThreshold = maxOf(0.0075f, state.noiseFloorEma * 2.2f)
+        val speechEndThreshold = maxOf(0.0045f, state.noiseFloorEma * 1.5f)
+        val startConsecutiveFrames = 2
         val minSpeechFrames = 4
-        val endSilenceFrames = 4
+        val endSilenceFrames = 6
         val maxUtteranceFrames = 35
+        val postBeepIgnoreMs = 260L
+        val preSpeechBufferFrames = 5
 
         if (!state.startedSpeech) {
-            if (state.armDelayFrames > 0) {
-                state.armDelayFrames -= 1
+            if (state.armDelayUntilMs > nowMs) {
                 return
             }
+            if (state.armBeepPending) {
+                playEnrollmentCueBeep()
+                state.armBeepPending = false
+                state.postBeepIgnoreUntilMs = nowMs + postBeepIgnoreMs
+                state.preSpeechBuffer.clear()
+                state.preSpeechFrames = 0
+                return
+            }
+            if (state.postBeepIgnoreUntilMs > nowMs) {
+                return
+            }
+
+            state.preSpeechBuffer.addLast(frame.copyOf())
+            while (state.preSpeechBuffer.size > preSpeechBufferFrames) {
+                state.preSpeechBuffer.removeFirst()
+            }
+
             if (rms >= speechStartThreshold) {
-                state.startedSpeech = true
-                state.speechFrames = 1
-                state.totalFrames = 1
-                state.silenceFrames = 0
-                state.currentFrames.add(frame.copyOf())
+                state.preSpeechFrames += 1
+                if (state.preSpeechFrames >= startConsecutiveFrames) {
+                    state.startedSpeech = true
+                    state.speechFrames = 1
+                    state.totalFrames = 0
+                    state.silenceFrames = 0
+                    state.currentFrames.clear()
+                    state.preSpeechBuffer.forEach { buffered ->
+                        state.currentFrames.add(buffered)
+                        state.totalFrames += 1
+                    }
+                    state.currentFrames.add(frame.copyOf())
+                    state.totalFrames += 1
+                }
+            } else {
+                state.preSpeechFrames = 0
             }
             return
         }
@@ -650,8 +679,10 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
         }
 
         state.currentFrames.clear()
+        state.preSpeechBuffer.clear()
         state.startedSpeech = false
         armEnrollmentForNextSample()
+        state.preSpeechFrames = 0
         state.speechFrames = 0
         state.silenceFrames = 0
         state.totalFrames = 0
@@ -672,17 +703,17 @@ open class WakeWordEngine(val context: Context, val config: APPConfig, val engin
         }
 
         enrollmentState = SpeakerEnrollmentState(targetSamples = 10)
-        armEnrollmentForNextSample()
+        armEnrollmentForNextSample(enrollmentInitialDelayMs)
         postEnrollmentStatus(
-            "Speaker enrollment started. Wait for beep, then say '${config.wakeWord}' clearly 10 times.",
+            "Speaker enrollment started. Beginning in ${(enrollmentInitialDelayMs / 1000.0)}s. Wait for beep, then say '${config.wakeWord}' clearly 10 times.",
             toast = true
         )
     }
 
-    private fun armEnrollmentForNextSample() {
+    private fun armEnrollmentForNextSample(delayMs: Long = enrollmentInterSampleDelayMs) {
         val state = enrollmentState ?: return
-        state.armDelayFrames = 5
-        playEnrollmentCueBeep()
+        state.armDelayUntilMs = System.currentTimeMillis() + delayMs
+        state.armBeepPending = true
     }
 
     private fun playEnrollmentCueBeep() {
