@@ -35,7 +35,8 @@ fun InfoGauge(
     indicatorValue: Float = 0.0f,
     disabled: Boolean = false,
     disabledText: String = "",
-    maxIndicatorValue: Int = 100,
+    minIndicatorValue: Float = 0f,
+    maxIndicatorValue: Float = 100f,
     decimalPlaces: Int = 0,
     backgroundIndicatorColor: Color = Color.Gray.copy(alpha = 0.3f),
     indicatorStrokeWidth: Float = 20f,
@@ -48,22 +49,16 @@ fun InfoGauge(
     smallTextFontSize: TextUnit = MaterialTheme.typography.bodyLarge.fontSize,
     smallTextColor: Color = Color.White
 ) {
-    var allowedIndicatorValue by remember {
-        mutableFloatStateOf(maxIndicatorValue.toFloat())
-    }
-    allowedIndicatorValue = if (indicatorValue <= maxIndicatorValue) {
-        indicatorValue
-    } else {
-        maxIndicatorValue.toFloat()
-    }
+    val allowedIndicatorValue = indicatorValue.coerceIn(minIndicatorValue, maxIndicatorValue)
 
-    var animatedIndicatorValue by remember { mutableFloatStateOf(0f) }
+    var animatedIndicatorValue by remember { mutableFloatStateOf(minIndicatorValue) }
     LaunchedEffect(key1 = allowedIndicatorValue) {
         animatedIndicatorValue = allowedIndicatorValue
     }
 
+    val range = (maxIndicatorValue - minIndicatorValue).takeIf { it != 0f } ?: 1f
     val percentage =
-        (animatedIndicatorValue / maxIndicatorValue) * 100
+        ((animatedIndicatorValue - minIndicatorValue) / range) * 100
 
     val sweepAngle by animateFloatAsState(
         targetValue = (2.4 * percentage).toFloat(),
@@ -203,7 +198,7 @@ fun InfoGaugePreview() {
     InfoGauge(
         indicatorValue = 5.8f,
         decimalPlaces = 1,
-        maxIndicatorValue = 10,
+        maxIndicatorValue = 10f,
         smallText = "Detection",
         disabledText = "Muted",
         disabled = false

@@ -1,18 +1,14 @@
 package com.msp1974.vacompanion.wyoming
 
-import com.msp1974.vacompanion.satellite.PipelineEndReason
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.network.sockets.port
-import io.ktor.utils.io.availableForWrite
-import io.ktor.utils.io.flushIfNeeded
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readLine
 import io.ktor.utils.io.readPacket
 import io.ktor.utils.io.writeByteArray
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,6 +28,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import timber.log.Timber
 import java.net.SocketException
+import kotlin.time.Duration.Companion.seconds
 
 const val WATCHDOG_SOCKET_TIMEOUT = 5000L
 interface IClientHandler {
@@ -69,7 +66,7 @@ abstract class WyomingClientHandler (
         get() {
             try {
                 return socket.remoteAddress.toString().split(":")[0].replace("/", "")
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 return ""
             }
         }
@@ -131,8 +128,8 @@ abstract class WyomingClientHandler (
 
     private suspend fun pinger() {
         while(runClient) {
-            delay(3000L)
-            val packet = WyomingPacket("ping", buildJsonObject { put("text","") })
+            delay(3.seconds)
+            val packet = WyomingPacket( WyomingEvent.PING, buildJsonObject { put("text","") })
             if (runClient)  writeMessage(packet)
         }
     }
@@ -140,7 +137,7 @@ abstract class WyomingClientHandler (
     private suspend fun watchDogProcess(timeout: Long) {
         try {
             while (runClient) {
-                delay(1000)
+                delay(1.seconds)
                 if (System.currentTimeMillis() - lastMessage > timeout) {
                     Timber.w("Watchdog timeout for client: $clientId. Disconnecting")
                     runClient = false

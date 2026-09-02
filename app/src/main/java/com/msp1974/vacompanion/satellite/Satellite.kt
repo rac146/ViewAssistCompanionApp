@@ -4,31 +4,38 @@ import android.annotation.SuppressLint
 import android.content.Context
 import androidx.media3.common.Player
 import androidx.core.net.toUri
+import com.msp1974.vacompanion.audio.AudioDSP
 import com.msp1974.vacompanion.broadcasts.BroadcastSender
 import com.msp1974.vacompanion.data.AvailableAlarms
 import com.msp1974.vacompanion.data.AvailableWakeSounds
 import com.msp1974.vacompanion.device.Camera
-import com.msp1974.vacompanion.device.DeviceInfo
-import com.msp1974.vacompanion.device.SensorUpdatesCallback
-import com.msp1974.vacompanion.device.Sensors
+import com.msp1974.vacompanion.device.DeviceManager
 import com.msp1974.vacompanion.device.VolumeObserver
-import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.ui.DiagnosticInfo
+import com.msp1974.vacompanion.audio.MicrophoneInput
 import com.msp1974.vacompanion.utils.Event
 import com.msp1974.vacompanion.utils.Helpers
 import com.msp1974.vacompanion.wakeword.AvailableWakeWords
 import com.msp1974.vacompanion.utils.EventListener
 import com.msp1974.vacompanion.utils.CustomFileDownloader
+import com.msp1974.vacompanion.utils.Helpers.Companion.capitalizeWords
 import com.msp1974.vacompanion.utils.SoundControl.Companion.isDoNotDisturbEnabled
 import com.msp1974.vacompanion.wakeword.WakeWordEngineProvider
+import com.msp1974.vacompanion.wyoming.EVENT_TYPE
 import com.msp1974.vacompanion.wyoming.SatelliteState
 import com.msp1974.vacompanion.wyoming.WyomingCapabilitiesBuilder
+import com.msp1974.vacompanion.wyoming.WyomingCustomEventType
+import com.msp1974.vacompanion.wyoming.WyomingEvent
 import com.msp1974.vacompanion.wyoming.WyomingInfoBuilder
 import com.msp1974.vacompanion.wyoming.WyomingPacket
 import io.github.z4kn4fein.semver.toVersion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -47,8 +54,8 @@ import timber.log.Timber
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.Date
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 interface ISatelliteEvent {
@@ -59,46 +66,63 @@ interface ISatelliteEvent {
 enum class AudioRouteOption { NONE, DETECT, STREAM}
 
 
-abstract class Satellite(var context: Context, val config: APPConfig, val scope: CoroutineScope, clientIdString: String, val deviceInfo: DeviceInfo): ISatelliteEvent, EventListener {
+abstract class Satellite(var context: Context, val deviceManager: DeviceManager, val scope: CoroutineScope, clientIdString: String): ISatelliteEvent, EventListener {
+
+    val config = deviceManager.config
+    val deviceInfo = deviceManager.deviceInfo
 
     var clientId = clientIdString
     val mediaManager: SatelliteMediaManager = SatelliteMediaManager(context, config)
 
-    private var sensorRunner: Sensors? = null
+    var sensorJob: Job? = null
     var motionTask = Camera(context, config)
 
-    private val customFilesHandler = SatelliteCustomFilesHandler(context, config)
+    private val customFilesHandler = SatelliteCustomFilesHandler(context, deviceManager)
 
-    private val eventHandler = SatelliteCustomEventHandler(context, config, scope, this)
+    private val eventHandler = SatelliteCustomEventHandler(context, deviceManager, scope, this)
 
     private var wakeWordHandler: SatelliteWakeWorkHandler? = null
     private var audioPipeline: SatelliteAudioPipeline? = null
-    private var audioPipelineId = AtomicInteger(0)
     private var audioPipelineLastStateChange = System.currentTimeMillis()
 
     private var soundEffectFinishTime: Long = 0
     private var currentWakeWordSoundUri: android.net.Uri? = null
 
+    private var _satelliteState = MutableStateFlow(SatelliteState.STOPPED)
+    val satelliteState: StateFlow<SatelliteState> = _satelliteState.asStateFlow()
+
+    // WyomingServerStatus.satelliteRunning (derived from this via WyomingTCPServer.updateStatus)
+    // is the single source of truth for "is the satellite running" app-wide - see VAViewModel.State.satelliteRunning.
     var state: SatelliteState = SatelliteState.STOPPED
         set(value) {
             field = value
-            config.isRunning = value == SatelliteState.RUNNING
+            _satelliteState.value = value
         }
     private var volumeObserver: VolumeObserver? = null
 
+    private var lastAudioLevel = 0f
+    private var lastDetectionLevel = 0f
 
+    private val audioLogManager: SatelliteAudioLog = SatelliteAudioLog(config).apply {
+        onPlaybackStatusChanged = { playing ->
+            muteMicrophone(playing)
+            sendDiagnostics(lastAudioLevel, lastDetectionLevel)
+        }
+    }
 
     suspend fun start() {
         // Add config change listeners
         Timber.d("Satellite starting...")
+        val startTime = System.currentTimeMillis()
+
         state = SatelliteState.STARTING
         config.eventBroadcaster.addListener(this)
 
         val loadedSettings = waitForSettings()
         if (!loadedSettings) {
             // Try 1 more time in case of timing issue
-            sendSatelliteMessage(clientId,"custom-event", buildJsonObject {
-                put("event_type", "settings")
+            sendSatelliteMessage(clientId, WyomingEvent.CUSTOM_EVENT, buildJsonObject {
+                put(EVENT_TYPE, WyomingCustomEventType.SETTINGS)
             })
             if (!waitForSettings(2000)) {
                 state = SatelliteState.ERROR
@@ -115,7 +139,7 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
 
         customFilesLoader()
 
-        volumeObserver = VolumeObserver(context) { musicVolume, notificationVolume ->
+        volumeObserver = VolumeObserver(context) { musicVolume, notificationVolume, alarmVolume ->
             if (config.musicVolume != musicVolume) {
                 config.musicVolume = musicVolume
                 sendSetting("music_volume", musicVolume)
@@ -125,13 +149,17 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
                 config.notificationVolume = notificationVolume
                 sendSetting("notification_volume", notificationVolume)
             }
+
+            if (config.alarmVolume != alarmVolume) {
+                config.alarmVolume = alarmVolume
+                sendSetting("alarm_volume", alarmVolume)
+            }
         }
         volumeObserver?.register()
 
-        val startTime = System.currentTimeMillis()
         scope.launch {
             warmUpAudioResources()
-            startSensors()
+            startSensorMonitor()
             startWakeWordDetection()
             eventHandler.run()
         }
@@ -147,10 +175,10 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
 
     suspend fun waitForSettings(waitTime: Long = 10000): Boolean {
         try {
-            withTimeout(waitTime) {
+            withTimeout(waitTime.milliseconds) {
                 // Wait for settings to be processed
                 while (!config.initSettings) {
-                    delay(10)
+                    delay(10.milliseconds)
                 }
                 Timber.d("Initial settings downloaded")
             }
@@ -163,8 +191,8 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
 
     suspend fun customFilesLoader() {
         // Refresh available sounds and alarms first so they are available for preloading
-        config.availableWakeSounds = AvailableWakeSounds(context, config).get()
-        config.availableAlarms = AvailableAlarms(context, config).get()
+        config.availableWakeSounds = AvailableWakeSounds(context, deviceManager).get()
+        config.availableAlarms = AvailableAlarms(context, deviceManager).get()
 
         // Look for custom files
         if (config.customFiles.toString() != "") {
@@ -172,11 +200,11 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
             if (result) {
                 config.availableWakeWords = AvailableWakeWords(context).get()
                 // Refresh again after download to include new files
-                config.availableWakeSounds = AvailableWakeSounds(context, config).get()
-                config.availableAlarms = AvailableAlarms(context, config).get()
+                config.availableWakeSounds = AvailableWakeSounds(context, deviceManager).get()
+                config.availableAlarms = AvailableAlarms(context, deviceManager).get()
 
-                val infoBuilder = WyomingInfoBuilder(config)
-                sendEvent("info", infoBuilder.buildInfo())
+                val infoBuilder = WyomingInfoBuilder(deviceManager)
+                sendEvent(WyomingEvent.INFO, infoBuilder.buildInfo())
 
                 sendCapabilities()
             }
@@ -203,8 +231,8 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
         val loadedSettings = waitForSettings(5000)
         if (!loadedSettings) {
             // Try 1 more time in case of timing issue
-            sendSatelliteMessage(clientId,"custom-event", buildJsonObject {
-                put("event_type", "settings")
+            sendSatelliteMessage(clientId, WyomingEvent.CUSTOM_EVENT, buildJsonObject {
+                put(EVENT_TYPE, WyomingCustomEventType.SETTINGS)
             })
             if (!waitForSettings(2000)) {
                 state = SatelliteState.ERROR
@@ -246,8 +274,8 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
 
     fun validateAppVersion(): Boolean {
         // Verify app version
-        if (config.version.toVersion() < config.minRequiredApkVersion.toVersion() ) {
-            Timber.w("Does not meet min app version requirement. Version: ${config.version}, Min: ${config.minRequiredApkVersion} ")
+        if (deviceInfo.software.appVersion.toVersion() < config.minRequiredApkVersion.toVersion() ) {
+            Timber.w("Does not meet min app version requirement. Version: ${deviceInfo.software.appVersion}, Min: ${config.minRequiredApkVersion} ")
             return false
         }
         return true
@@ -255,7 +283,7 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
 
     suspend fun processMessage(packet: WyomingPacket) {
         when (packet.type) {
-            "custom-event" -> customEventHandler(clientId, packet)
+            WyomingEvent.CUSTOM_EVENT -> customEventHandler(clientId, packet)
             else -> {
                 if (audioPipeline != null && audioPipeline?.pipelineStage != PipelineStage.ENDED) {
                     audioPipeline?.processAudioPipelineMessage(packet)
@@ -275,20 +303,19 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
             wakeWordHandler = null
         }
 
-        if (config.wakeWord == "none") {
-            return
-        }
-
         Timber.d("Starting Wake Word Detection")
         sendDiagnostics(0f, 0f)
         withContext(Dispatchers.Default) {
-            wakeWordHandler = object : SatelliteWakeWorkHandler(context, config, deviceInfo, scope) {
+            wakeWordHandler = object : SatelliteWakeWorkHandler(context, deviceManager, scope) {
                 override fun onStateChange(state: WakeWordHandlerState) {
                     Timber.d("Wake word handler state: $state")
                 }
 
-                override suspend fun onAudio(audio: WakeWordEngineProvider.AudioResult.Audio) {
-                    sendAudio(audio)
+                override suspend fun onAudio(audio: WakeWordEngineProvider.AudioResult.Audio, streamAudio: Boolean) {
+                    if (streamAudio) {
+                        sendAudio(audio)
+                    }
+                    audioLogManager.onAudio(AudioDSP().byteArrayToShortArray(audio.audio.toByteArray()))
                 }
 
                 override suspend fun onWakeWordDetected(detection: WakeWordEngineProvider.WakeWordDetection) {
@@ -298,7 +325,7 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
                     } else if (mediaManager.alarmPlayer.isSounding()) {
                         onStopWordDetected(detection)
                     } else {
-                        handleWakeWordDetection()
+                        handleWakeWordDetection(detection)
                     }
                 }
 
@@ -318,6 +345,7 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
                 override fun onDiagnostics(level: Float, lastDetectionLevel: Float) {
                     sendDiagnostics(level, lastDetectionLevel)
                 }
+
             }.also {
                 Timber.d("Starting Wake Word Detection")
                 it.run()
@@ -345,8 +373,16 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
         wakeWordHandler?.clearSpeakerEnrollment()
     }
 
-    suspend fun handleWakeWordDetection() {
-        if (clientId == "") {
+    fun startSpeakerEnrollment() {
+        wakeWordHandler?.startSpeakerEnrollment()
+    }
+
+    fun clearSpeakerEnrollment() {
+        wakeWordHandler?.clearSpeakerEnrollment()
+    }
+
+    suspend fun handleWakeWordDetection(detection: WakeWordEngineProvider.WakeWordDetection) {
+        if (clientId.isEmpty()) {
             Timber.e("Unable to run audio pipeline. Satellite not connected to HA")
             return
         }
@@ -378,7 +414,8 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
                 config.screenOn = true
                 config.screenSaver = false
             }
-            startAudioPipeline(PipelineStartMode.WAKE_WORD_DETECTED)
+            audioLogManager.onWakeWordDetected(detection.timestamp, detection.wakeWord, detection.score)
+            startAudioPipeline(PipelineStartMode.WAKE_WORD_DETECTED, detection.timestamp)
             playWakeWordDetectionSound()
         }
     }
@@ -395,7 +432,7 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
                 Timber.i("Started wake word sound")
                 scope.launch {
                     while(mediaManager.soundPlayer.state.value != Player.STATE_ENDED) {
-                        delay(50)
+                        delay(50.milliseconds)
                     }
                     audioPipeline?.silenceAudioBefore = System.currentTimeMillis()
                     Timber.i("Ended wake word sound")
@@ -451,13 +488,12 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
     }
 
     @OptIn(ExperimentalAtomicApi::class)
-    fun startAudioPipeline(startStage: PipelineStartMode) {
+    fun startAudioPipeline(startStage: PipelineStartMode, eventId: Long = System.currentTimeMillis()) {
         if (audioPipeline != null) {
             audioPipeline?.stop()
             audioPipeline = null
         }
-        val pipelineId = audioPipelineId.getAndAdd(1)
-        audioPipeline = object: SatelliteAudioPipeline(context, scope, config, pipelineId, mediaManager) {
+        audioPipeline = object: SatelliteAudioPipeline(context, scope, config, eventId, mediaManager) {
             override fun sendMessage(packet: WyomingPacket) {
                 sendSatelliteMessage(clientId, packet.type, packet.data, packet.payload)
             }
@@ -479,6 +515,18 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
                 }
             }
 
+            override fun onRequestTranscript(pipelineId: Long, text: String) {
+                audioLogManager.onRequest(pipelineId, text)
+            }
+
+            override fun onResponseTranscript(pipelineId: Long, text: String) {
+                audioLogManager.onResponse(pipelineId, text)
+            }
+
+            override fun onErrorMessage(pipelineId: Long, text: String) {
+                audioLogManager.onErrorResponse(pipelineId, text)
+            }
+
             override fun onFinish(reason: PipelineEndReason, continueConversation: Boolean) {
                 if (reason != PipelineEndReason.END_OF_PIPELINE || !continueConversation) {
                     if (audioPipeline === this) {
@@ -491,12 +539,15 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
                     if (continueConversation) {
                         scope.launch {
                             while (mediaManager.voicePlayer.isRunning()) {
-                                delay(10)
+                                delay(10.milliseconds)
                             }
                             startAudioPipeline(PipelineStartMode.CONTINUE_CONVERSATION)
                         }
                     }
+                } else {
+                    audioPipeline = null
                 }
+
                 if (reason == PipelineEndReason.ERRORED && config.wakeWordSound != "none") {
                     playErrorSound()
                 }
@@ -525,9 +576,9 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
         val eventType = packet.getProp("event_type")
 
         when (eventType) {
-            "action" -> handleAction(packet.getProp("action"), packet)
-            "settings" -> handleSettings(packet.getProp("settings"))
-            "capabilities" -> handleCapabilities(clientId)
+            WyomingCustomEventType.ACTION -> handleAction(packet.getProp("action"), packet)
+            WyomingCustomEventType.SETTINGS -> handleSettings(packet.getProp("settings"))
+            WyomingCustomEventType.CAPABILITIES -> handleCapabilities(clientId)
         }
     }
 
@@ -543,7 +594,15 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
                     BroadcastSender.sendBroadcast(context, BroadcastSender.TOAST_MESSAGE, msg)
                 }
                 "refresh" -> config.eventBroadcaster.notifyEvent(Event("refresh", "", ""))
-                "wake" -> scope.launch {handleWakeWordDetection()}
+                "wake" -> scope.launch {
+                    handleWakeWordDetection(WakeWordEngineProvider.WakeWordDetection(
+                        wakeWordId = "manual_wake",
+                        wakeWord = "Manual Wake",
+                        detected = true,
+                        score = 1.0f,
+                        timestamp = System.currentTimeMillis(),
+                    ))
+                }
                 "alarm" -> if (payloadStr.isNotEmpty()) {
                     val payload = Json.parseToJsonElement(payloadStr).jsonObject
                     handleAlarmAction(payload["activate"]?.jsonPrimitive?.booleanOrNull ?: false)
@@ -604,7 +663,7 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
     }
 
     private fun handleCapabilities(clientId: String) {
-        val capabilitiesBuilder = WyomingCapabilitiesBuilder(config, deviceInfo)
+        val capabilitiesBuilder = WyomingCapabilitiesBuilder(deviceManager)
         sendSatelliteMessage(clientId,"capabilities", capabilitiesBuilder.buildInfo())
     }
 
@@ -612,11 +671,11 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
     // Send messages
     // *************************************************************************
     fun sendStatus(data: JsonObject) {
-        sendCustomEvent("status", data)
+        sendCustomEvent(WyomingCustomEventType.STATUS, data)
     }
 
     fun sendSetting(name: String, value: Any) {
-        sendCustomEvent("settings", buildJsonObject {
+        sendCustomEvent(WyomingCustomEventType.SETTINGS, buildJsonObject {
             put("timestamp", isoNow())
             putJsonObject("settings") {
                 when (value) {
@@ -634,8 +693,8 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
     }
 
     fun sendCustomEvent(type: String, data: JsonObject) {
-        sendSatelliteMessage(clientId, "custom-event", buildJsonObject {
-            put("event_type", type)
+        sendSatelliteMessage(clientId, WyomingEvent.CUSTOM_EVENT, buildJsonObject {
+            put(EVENT_TYPE, type)
             put("data", data)
         })
     }
@@ -669,9 +728,9 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
         }
     }
 
-    suspend fun startSensors() {
-        sensorRunner = Sensors(context, config, deviceInfo, object : SensorUpdatesCallback {
-            override fun onUpdate(data: MutableMap<String, Any>) {
+    suspend fun startSensorMonitor() {
+        sensorJob = scope.launch {
+            deviceManager.sensors.collect { data ->
                 val data = buildJsonObject {
                     put("timestamp", Date().toString())
                     putJsonObject("sensors") {
@@ -693,7 +752,8 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
                 }
                 sendStatus(data)
             }
-        })
+        }
+
         // Start motion sensor
         if (config.motionDetectionMode != "none") {
             delay(2.seconds)  // Add delay to camera start to let app start up
@@ -702,19 +762,23 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
     }
 
     suspend fun stopSensors() {
-        sensorRunner?.stop()
+        sensorJob?.cancel()
         motionTask.stopCamera()
     }
 
     fun sendDiagnostics(audioLevel: Float, detectionLevel: Float) {
+        lastAudioLevel = audioLevel
+        lastDetectionLevel = detectionLevel
+        val wakeWordName = if (config.wakeWord == "") "None" else config.wakeWord.replace("_", " ").capitalizeWords()
         if (config.diagnosticsEnabled) {
             val data = DiagnosticInfo(
                 show = config.diagnosticsEnabled,
                 engine = config.wakeWordEngine,
-                audioLevel = audioLevel * 100,
+                audioLevel = AudioDSP().linearToDbfs(audioLevel),
                 detectionLevel = detectionLevel * 10,
                 detectionThreshold = config.wakeWordThreshold * 10,
-                wakeWord = config.wakeWord,
+                wakeWord = wakeWordName,
+                muted = config.isMuted,
                 mode = if (wakeWordHandler?.state != WakeWordHandlerState.RUNNING) {
                     AudioRouteOption.NONE
                 } else if (wakeWordHandler?.engine?.isStreaming() ?: false) {
@@ -722,7 +786,10 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
                 } else {
                     AudioRouteOption.DETECT
                 },
-                motionDetectionMode = config.motionDetectionMode
+                motionDetectionMode = config.motionDetectionMode,
+                activeMic = MicrophoneInput.activeMicInput,
+                recordingWakewordEnabled = config.recordingWakewordEnabled,
+                audioLog = audioLogManager.getLog()
             )
             val event = Event("diagnosticStats", "", data)
             config.eventBroadcaster.notifyEvent(event)
@@ -730,13 +797,25 @@ abstract class Satellite(var context: Context, val config: APPConfig, val scope:
     }
 
     override fun onEventTriggered(event: Event) {
-        if (event.eventName == "requestSettings") {
-            scope.launch {
-                if (clientId != "") {
-                    sendSatelliteMessage(clientId, "custom-event", buildJsonObject {
-                        put("event_type", "settings")
-                    })
+        when (event.eventName) {
+            "requestSettings" -> {
+                scope.launch {
+                    if (clientId != "") {
+                        sendSatelliteMessage(clientId, WyomingEvent.CUSTOM_EVENT, buildJsonObject {
+                            put(EVENT_TYPE, WyomingCustomEventType.SETTINGS)
+                        })
+                    }
                 }
+            }
+            "playRecording" -> {
+                (event.newValue as? Long)?.let { eventId ->
+                    audioLogManager.playRecording(eventId)
+                }
+                sendDiagnostics(0f, 0f)
+            }
+            "toggleRecording" -> {
+                config.recordingWakewordEnabled = !config.recordingWakewordEnabled
+                sendDiagnostics(0f, 0f)
             }
         }
     }

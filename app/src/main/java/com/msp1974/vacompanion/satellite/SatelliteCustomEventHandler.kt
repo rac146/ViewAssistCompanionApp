@@ -2,7 +2,7 @@ package com.msp1974.vacompanion.satellite
 
 import android.content.Context
 import android.media.AudioManager
-import com.msp1974.vacompanion.settings.APPConfig
+import com.msp1974.vacompanion.device.DeviceManager
 import com.msp1974.vacompanion.device.VolumeManager
 import com.msp1974.vacompanion.utils.Event
 import com.msp1974.vacompanion.utils.EventListener
@@ -22,16 +22,18 @@ import kotlinx.serialization.json.putJsonObject
 import timber.log.Timber
 import java.time.Instant
 import java.time.format.DateTimeFormatter
+import kotlin.time.Duration.Companion.milliseconds
 
 
 class SatelliteCustomEventHandler(
     val context: Context,
-    val config: APPConfig,
+    val deviceManager: DeviceManager,
     val scope: CoroutineScope,
     val satellite: Satellite
 ): EventListener {
 
     val volumeManager = VolumeManager(context)
+    val config = deviceManager.config
 
     private val serviceStarted = CompletableDeferred<Int>()
 
@@ -52,6 +54,8 @@ class SatelliteCustomEventHandler(
                     config.eventBroadcaster.removeListener(this@SatelliteCustomEventHandler)
                 }
             }
+
+
             serviceStarted.await()
             job.cancel()
             Timber.d("Satellite custom event handler stopped")
@@ -80,14 +84,12 @@ class SatelliteCustomEventHandler(
             "musicVolume" -> {
                 volumeManager.setVolume(AudioManager.STREAM_MUSIC, event.newValue as Int)
             }
-            "wakeWord", "wakeWordSound", "wakeWordThreshold", "wakeWordEngine", "useVoiceEnhancer", "useAdvancedGain" -> {
+            "alarmVolume" -> {
+                volumeManager.setVolume(AudioManager.STREAM_ALARM, event.newValue as Int)
+            }
+            "wakeWord", "wakeWordSound", "wakeWordThreshold", "wakeWordEngine" -> {
                 scope.launch {
                     satellite.restartWakeWordDetection()
-                }
-            }
-            "wakeWordTrigger" -> {
-                scope.launch {
-                    satellite.handleWakeWordDetection()
                 }
             }
             "speakerEnrollmentStart" -> {
@@ -115,6 +117,9 @@ class SatelliteCustomEventHandler(
             "screenSaver" -> {
                 satellite.sendSetting("screen_saver", event.newValue)
             }
+            "screenSaverDisableOnTouch" -> {
+                satellite.sendSetting("screen_saver_disable_on_touch", event.newValue)
+            }
             "currentPath" -> {
                 satellite.sendStatus(
                     buildJsonObject {
@@ -130,7 +135,7 @@ class SatelliteCustomEventHandler(
                 if (isOn && config.enableMotionDetection) {
                     // Force restart of camera when screen turns on to ensure recovery
                     scope.launch {
-                        delay(500)
+                        delay(500.milliseconds)
                         satellite.motionTask.startCamera()
                     }
                 }
@@ -186,7 +191,7 @@ class SatelliteCustomEventHandler(
                 }
             }
             "updateAvailableWakeWords" -> {
-                val infoBuilder = WyomingInfoBuilder(config)
+                val infoBuilder = WyomingInfoBuilder(deviceManager)
                 satellite.sendEvent("info", infoBuilder.buildInfo())
             }
             "updateCustomFiles" -> {

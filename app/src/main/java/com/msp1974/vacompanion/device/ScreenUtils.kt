@@ -28,7 +28,7 @@ enum class ScreenOnMode {
 
 class ScreenUtils (val context: Context, val config: APPConfig) : ContextWrapper(context) {
     var log = Logger()
-    private val firebase = FirebaseManager.Companion.getInstance(context)
+    private val firebase = FirebaseManager.getInstance(context)
 
     private var wakeLock: PowerManager.WakeLock? = null
     var initBrightness: Float = 0f

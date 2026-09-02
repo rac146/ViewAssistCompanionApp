@@ -1,4 +1,4 @@
-package com.msp1974.vacompanion.device
+package com.msp1974.vacompanion.device.info
 
 import android.app.NotificationManager
 import android.content.Context
@@ -13,7 +13,8 @@ data class DeviceAudioFeaturesData(
     val autoGainControl: Boolean,
     val noiseSuppression: Boolean,
     val maxMusicVolume: Int,
-    val maxNotificationVolume: Int
+    val maxNotificationVolume: Int,
+    val maxAlarmVolume: Int
 )
 
 data class DeviceFeaturesData(
@@ -36,7 +37,8 @@ class DeviceFeatures(
             autoGainControl = AutomaticGainControl.isAvailable(),
             noiseSuppression = NoiseSuppressor.isAvailable(),
             maxMusicVolume = getMaxStreamVolume(AudioManager.STREAM_MUSIC),
-            maxNotificationVolume = getMaxStreamVolume(AudioManager.STREAM_NOTIFICATION)
+            maxNotificationVolume = getMaxStreamVolume(AudioManager.STREAM_NOTIFICATION),
+            maxAlarmVolume = getMaxStreamVolume(AudioManager.STREAM_ALARM)
 
         )
     }

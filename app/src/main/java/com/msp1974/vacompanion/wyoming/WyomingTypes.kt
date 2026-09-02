@@ -4,6 +4,7 @@ object WyomingEvent {
     const val PING = "ping"
     const val PONG = "pong"
     const val DESCRIBE = "describe"
+    const val CAPABILITIES = "capabilities"
     const val INFO = "info"
     const val RUN_SATELLITE = "run-satellite"
     const val PAUSE_SATELLITE = "pause-satellite"
@@ -16,9 +17,20 @@ object WyomingEvent {
     const val AUDIO_CHUNK = "audio-chunk"
     const val AUDIO_STOP = "audio-stop"
     const val PLAYED = "played"
+    const val RUN_PIPELINE = "run-pipeline"
     const val PIPELINE_ENDED = "pipeline-ended"
     const val ERROR = "error"
+    const val HANDLED = "handled"
     const val CUSTOM_EVENT = "custom-event"
+}
+
+const val EVENT_TYPE = "event_type"
+
+object WyomingCustomEventType {
+    const val ACTION = "action"
+    const val SETTINGS = "settings"
+    const val CAPABILITIES = "capabilities"
+    const val STATUS = "status"
 }
 
 /**
@@ -40,27 +52,5 @@ enum class SatelliteState {
     RUNNING,
     STARTING,
     STOPPING,
-    WAITING_FOR_SETTINGS,
     ERROR
 }
-
-/**
- * Represents the current stage of an active voice pipeline.
- */
-enum class PipelineStage {
-    IDLE,
-    LISTENING,
-    STREAMING,
-    AWAITING_TTS
-}
-
-/**
- * Tracks the state of an individual voice pipeline session.
- */
-data class PipelineSession(
-    val id: Int,
-    @Volatile var logicFinished: Boolean = false,
-    @Volatile var audioFinished: Boolean = false,
-    @Volatile var finalized: Boolean = false,
-    @Volatile var forceContinue: Boolean = false
-)

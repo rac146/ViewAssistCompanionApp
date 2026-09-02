@@ -7,12 +7,12 @@ import android.media.MediaRecorder
  * Canonical audio format constants for the VACA capture/playback path.
  *
  * All components that produce or consume audio on the pipeline
- * (MicrophoneInput, VoicePlayer, WebRTC APM, SatelliteClientHandler, etc.)
+ * (MicrophoneInput, VoicePlayer, SatelliteClientHandler, etc.)
  * must agree on these values. Centralising them here prevents silent mismatches
  * when one file is updated but others are not.
  */
 object VACAAudioFormat {
-    /** Sample rate in Hz. WebRTC APM requires 16 kHz. */
+    /** Sample rate in Hz. */
     const val SAMPLE_RATE_HZ = 16000
 
     /** Number of audio channels (mono). */
@@ -27,10 +27,7 @@ object VACAAudioFormat {
     /** Android AudioFormat channel config for mono input. */
     @JvmField val CHANNEL_IN_CONFIG = AudioFormat.CHANNEL_IN_MONO
 
-    /** Samples per 10 ms frame (used by WebRTC APM). */
-    const val FRAME_SIZE_10MS = SAMPLE_RATE_HZ / 100  // 160
-
-    const val DEFAULT_AUDIO_SOURCE = MediaRecorder.AudioSource.VOICE_RECOGNITION
+    const val DEFAULT_AUDIO_SOURCE = MediaRecorder.AudioSource.VOICE_COMMUNICATION
     const val FALLBACK_AUDIO_SOURCE = MediaRecorder.AudioSource.MIC
 
     const val DEFAULT_BUFFER_SIZE_IN_SHORTS = 1280

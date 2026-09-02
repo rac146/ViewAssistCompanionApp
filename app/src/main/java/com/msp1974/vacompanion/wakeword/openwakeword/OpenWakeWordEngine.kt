@@ -63,6 +63,9 @@ class OpenWakeWordEngine(
         var lastTriggeredAtMs: Long = 0L
     )
 
+    private val lastScores = mutableMapOf<String, Float>()
+    private val audioDSP = AudioDSP()
+
     /**
      * Flow of wake word detection events.
      *
@@ -171,32 +174,37 @@ class OpenWakeWordEngine(
         else flow {
             val wakeWords = activeWakeWords
             val audioSource = if(isAndroidThings) VACAAudioFormat.FALLBACK_AUDIO_SOURCE else VACAAudioFormat.DEFAULT_AUDIO_SOURCE
-            val microphoneInput = MicrophoneInput(config, audioSource, frameSize = 1280)
+            val microphoneInput = MicrophoneInput(config, audioSource)
             try {
                 microphoneInput.start()
                 emit(AudioResult.EngineStatus("Started"))
                 while (true) {
-                    val audio = microphoneInput.readFloat()
+                    val audio = microphoneInput.readShort()
                     val frameTimestamp = System.currentTimeMillis()
 
                     if (audio.isNotEmpty()) {
                         val detections = processAudio(audio, frameTimestamp)
 
                         if (config.diagnosticsEnabled) {
-                            emit(AudioResult.AudioLevel(AudioDSP().audioLevel(audio)))
+                            val normalisedAudio = audioDSP.normaliseAudioBuffer(audio)
+                            emit(AudioResult.AudioLevel(AudioDSP().audioLevel(normalisedAudio)))
                         }
 
-                        val a = AudioDSP().floatArrayToByteBuffer(audio)
-                        emit(
-                            AudioResult.Audio(
-                                ByteString.copyFrom(a),
-                                timestamp = frameTimestamp,
-                                scores = latestFrameScores
+                        if (isStreaming || config.recordingWakewordEnabled) {
+                            val audioBytes = AudioDSP().shortArrayToByteBuffer(audio)
+                            emit(
+                                AudioResult.Audio(
+                                    ByteString.copyFrom(audioBytes),
+                                    timestamp = frameTimestamp,
+                                    scores = latestFrameScores
+                                )
                             )
-                        )
+                        }
 
+                        val detections = processAudio(audioDSP.shortArrayTo16BitPCMFloat(audio), frameTimestamp)
                         for (detection in detections) {
-                            if (detection.score > 0.1f) {
+                            val lastScore = lastScores[detection.wakeWordId] ?: 0f
+                            if (detection.score > 0.1f || lastScore > 0.1f) {
                                 if (detection.wakeWordId in wakeWords) {
                                     Timber.i(
                                     "OWW trigger detected wake='%s' score=%.4f ts=%d",
@@ -207,6 +215,7 @@ class OpenWakeWordEngine(
                                 emit(AudioResult.WakeDetected(detection.copy(timestamp = frameTimestamp)))
                                 }
                             }
+                            lastScores[detection.wakeWordId] = detection.score
                         }
                     }
                     yield()

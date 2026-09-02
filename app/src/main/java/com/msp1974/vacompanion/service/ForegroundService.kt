@@ -20,11 +20,9 @@ import com.msp1974.vacompanion.MainActivity
 import com.msp1974.vacompanion.R
 import com.msp1974.vacompanion.VACAApplication
 import com.msp1974.vacompanion.broadcasts.BroadcastSender
-import com.msp1974.vacompanion.data.NetworkStatusManager
-import com.msp1974.vacompanion.device.DeviceInfo
-import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.settings.BackgroundTaskStatus
 import com.msp1974.vacompanion.utils.FirebaseManager
+import com.msp1974.vacompanion.device.DeviceManager
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -35,9 +33,9 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class VAForegroundService @Inject constructor() : LifecycleService() {
 
-    @Inject lateinit var config: APPConfig
-    @Inject lateinit var deviceInfo: DeviceInfo
-    @Inject lateinit var networkStatusManager: NetworkStatusManager
+    @Inject lateinit var deviceManager: DeviceManager
+
+    private val config get() = deviceManager.config
 
     private lateinit var firebase: FirebaseManager
     private var keyguardLock: KeyguardManager.KeyguardLock? = null
@@ -135,26 +133,11 @@ class VAForegroundService @Inject constructor() : LifecycleService() {
                         firebase.logException(ex)
                     }
 
-                    backgroundTask = BackgroundTaskController(this@VAForegroundService, config, deviceInfo, networkStatusManager)
+                    backgroundTask = BackgroundTaskController(this@VAForegroundService, deviceManager)
                     backgroundTask?.start()
                     Timber.i("Background Service Started")
                     config.backgroundTaskRunning = true
                     config.backgroundTaskStatus = BackgroundTaskStatus.STARTED
-
-                    // Launch Activity if not running on service start
-                    // Can be caused by crash and service restarted by OS
-                    //if (config.currentActivity == "") {
-                    //    Timber.i("Launching MainActivity from foreground service")
-                    //    Firebase.crashlytics.log("Launching MainActivity from foreground service")
-                    //    val intent = Intent(this, MainActivity::class.java)
-                    //    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    //    try {
-                    //        startActivity(intent)
-                    //    } catch (ex: Exception) {
-                    //        Timber.e("Foreground service failed to launch activity - ${ex.message}")
-                    //    }
-                    //}
-                    //restartActivityWatchdog()
                 }
             }
 

@@ -10,6 +10,9 @@
     <!--Mic audio recording and ?-->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -48,6 +51,9 @@
         tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"
         tools:ignore="RequestInstallPackagesPolicy" />
+
+    <attribution android:tag="@string/empty" android:label="@string/audio_playback_attribution" />
+    <attribution android:tag="audioPlayback" android:label="@string/audio_playback_attribution" />
 
     <application
         android:name=".VACAApplication"

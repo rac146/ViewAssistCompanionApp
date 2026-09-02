@@ -3,18 +3,21 @@ package com.msp1974.vacompanion.utils
 import android.content.Context
 import com.msp1974.vacompanion.data.AvailableAlarm
 import com.msp1974.vacompanion.data.AvailableWakeSound
-import com.msp1974.vacompanion.settings.APPConfig
+import com.msp1974.vacompanion.device.DeviceManager
+import com.msp1974.vacompanion.device.authentication.HttpClientProvider
 import com.msp1974.vacompanion.utils.Helpers.Companion.capitalizeWords
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.contentLength
+import io.ktor.http.isSuccess
+import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
-import java.io.IOException
 import java.net.URL
 import java.nio.file.Path
 import kotlin.io.path.Path
@@ -41,9 +44,9 @@ sealed class DownloadStatus {
  * and store them in the app's internal storage.
  * Emits download status via Flow.
  */
-class CustomFileDownloader(private val context: Context, val config: APPConfig) {
+class CustomFileDownloader(private val context: Context, val deviceManager: DeviceManager) {
 
-    private val client = OkHttpClient()
+    private val client = HttpClientProvider().get()
 
     companion object {
         const val CUSTOM_DIR = "custom"
@@ -149,8 +152,8 @@ class CustomFileDownloader(private val context: Context, val config: APPConfig) 
             WakeWordType.OPENWAKEWORD_RT -> listOf("tflite")
         }
 
-        val baseUrl = AuthUtils.getHAUrl(config, false)
-        val urlBase = URL(URL(baseUrl), "vaca/$CUSTOM_DIR/${wakeWordType.toString().lowercase().replace("_rt","")}/")
+        val baseUrl = deviceManager.authenticationManager.getBaseUrl()
+        val urlBase = URL(baseUrl, "vaca/$CUSTOM_DIR/${wakeWordType.toString().lowercase().replace("_rt","")}/")
 
         for (ext in extensions) {
             val file = "$fileNameBase.$ext"
@@ -165,10 +168,10 @@ class CustomFileDownloader(private val context: Context, val config: APPConfig) 
      * Downloads a custom file (sound or alarm).
      */
     fun downloadCustomFile(subDir: String, fileName: String): Flow<DownloadStatus> = flow {
-        val baseUrl = AuthUtils.getHAUrl(config, false)
-        val fileUrl = URL(URL(baseUrl), "vaca/$CUSTOM_DIR/$subDir/$fileName").toString()
+        val baseUrl = deviceManager.authenticationManager.getBaseUrl()
+        val fileUrl = URL(baseUrl, "/vaca/$CUSTOM_DIR/$subDir/$fileName").toString()
         val targetDir = Path(context.filesDir.absolutePath, CUSTOM_DIR, subDir)
-        
+
         downloadFileGeneric(targetDir, fileUrl, fileName).collect { status ->
             emit(status)
         }
@@ -188,41 +191,41 @@ class CustomFileDownloader(private val context: Context, val config: APPConfig) 
         }
 
         val targetFile = File(targetDir.toString(), fileName)
-        val request = Request.Builder().url(url).build()
 
         try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    emit(DownloadStatus.Error(fileName, "Download failed: HTTP ${response.code}"))
-                    return@flow
+            Timber.d("Downloading $url to $targetDir")
+            client.prepareGet(url).execute { response ->
+                if (!response.status.isSuccess()) {
+                    emit(DownloadStatus.Error(fileName, "Download failed: HTTP ${response.status.value}"))
+                    return@execute
                 }
 
-                val body = response.body
-                val contentLength = body?.contentLength() ?: -1L
-                body?.byteStream()?.use { input ->
-                    FileOutputStream(targetFile).use { output ->
-                        val buffer = ByteArray(8192)
-                        var bytesRead: Int
-                        var totalBytesRead: Long = 0
+                val contentLength = response.contentLength() ?: -1L
+                val channel = response.bodyAsChannel()
+                
+                FileOutputStream(targetFile).use { output ->
+                    val buffer = ByteArray(8192)
+                    var totalBytesRead: Long = 0
+                    
+                    while (!channel.isClosedForRead) {
+                        val bytesRead = channel.readAvailable(buffer)
+                        if (bytesRead <= 0) break
+                        output.write(buffer, 0, bytesRead)
+                        totalBytesRead += bytesRead
                         
-                        while (input.read(buffer).also { bytesRead = it } != -1) {
-                            output.write(buffer, 0, bytesRead)
-                            totalBytesRead += bytesRead
-                            
-                            if (contentLength > 0) {
-                                val progress = ((totalBytesRead * 100) / contentLength).toInt()
-                                emit(DownloadStatus.Progress(fileName, progress))
-                            }
+                        if (contentLength > 0) {
+                            val progress = ((totalBytesRead * 100) / contentLength).toInt()
+                            emit(DownloadStatus.Progress(fileName, progress))
                         }
                     }
                 }
                 
-                Timber.i("Successfully downloaded $fileName to $targetFile")
+                Timber.d("Successfully downloaded $fileName to $targetFile")
                 emit(DownloadStatus.Success(fileName, targetFile.toString()))
             }
-        } catch (e: IOException) {
+        } catch (e: Exception) {
             Timber.e(e, "Error downloading from $url")
-            emit(DownloadStatus.Error(fileName, e.message ?: "Unknown I/O error"))
+            emit(DownloadStatus.Error(fileName, e.message ?: "Unknown error"))
         }
     }
 

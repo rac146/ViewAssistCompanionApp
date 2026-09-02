@@ -3,8 +3,7 @@ package com.msp1974.vacompanion.satellite
 import android.Manifest
 import android.content.Context
 import com.msp1974.vacompanion.broadcasts.BroadcastSender
-import com.msp1974.vacompanion.device.DeviceInfo
-import com.msp1974.vacompanion.settings.APPConfig
+import com.msp1974.vacompanion.device.DeviceManager
 import com.msp1974.vacompanion.utils.FirebaseManager
 import com.msp1974.vacompanion.utils.Permissions
 import com.msp1974.vacompanion.wakeword.WakeWordEngine
@@ -22,6 +21,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import kotlin.collections.set
+import kotlin.time.Duration.Companion.milliseconds
 
 enum class WakeWordHandlerState {
     STOPPED,
@@ -32,7 +32,7 @@ enum class WakeWordHandlerState {
 
 interface IWakeWordHandler {
     fun onStateChange(state: WakeWordHandlerState)
-    suspend fun onAudio(audio: WakeWordEngineProvider.AudioResult.Audio)
+    suspend fun onAudio(audio: WakeWordEngineProvider.AudioResult.Audio, streamAudio: Boolean)
     suspend fun onWakeWordDetected(detection: WakeWordEngineProvider.WakeWordDetection)
 
     suspend fun onStopWordDetected(detection: WakeWordEngineProvider.WakeWordDetection)
@@ -40,8 +40,10 @@ interface IWakeWordHandler {
     fun onDiagnostics(level: Float, lastDetectionLevel: Float)
 }
 
-abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPConfig, val deviceInfo: DeviceInfo, val scope: CoroutineScope): IWakeWordHandler {
+abstract class SatelliteWakeWorkHandler(val context: Context, val deviceManager: DeviceManager, val scope: CoroutineScope): IWakeWordHandler {
 
+    val config = deviceManager.config
+    val deviceInfo = deviceManager.deviceInfo
     val firebase = FirebaseManager.getInstance(context)
 
     var state: WakeWordHandlerState = WakeWordHandlerState.STOPPED
@@ -65,10 +67,10 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
         scope.launch (context = Dispatchers.Default) {
             start()
         }
-        withTimeout(5000) {
+        withTimeout(5000.milliseconds) {
             try {
                 while (state != WakeWordHandlerState.RUNNING) {
-                    delay(100)
+                    delay(100.milliseconds)
                 }
                 Timber.d("Wake word detection started in ${System.currentTimeMillis() - startTime}ms")
             } catch (e: Exception) {
@@ -103,29 +105,32 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
     suspend fun stop() {
         if (wakeWordJob != null && wakeWordJob!!.isActive) {
             state = WakeWordHandlerState.STOPPING
-            wakeWordJob?.cancel()
-            wakeWordJob = null
-        }
 
-        try {
-            withTimeout(200L) {
-                withContext(Dispatchers.Default) {
-                    while (state != WakeWordHandlerState.STOPPED) {
-                        delay(10)
+            try {
+                withTimeout(200.milliseconds) {
+                    withContext(Dispatchers.Default) {
+                        wakeWordJob?.cancel()
+                        while (wakeWordJob!!.isActive) {
+                            delay(10.milliseconds)
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                Timber.e("Error waiting for wake word detection to stop: ${e.message.toString()}")
+            } finally {
+                engine = null
+                wakeWordJob = null
+                state = WakeWordHandlerState.STOPPED
+                onDiagnostics(0f, 0f)
+                Timber.d("Wake word detection stopped")
             }
-        } catch (e: Exception) {
-        } finally {
-            engine = null
-            onDiagnostics(0f, 0f)
-            Timber.d("Wake word detection stopped")
         }
     }
 
 
     fun runWakeWordDetection() {
-        if (!Permissions(context, config, deviceInfo).hasPermission(Manifest.permission.RECORD_AUDIO)) {
+        if (!Permissions(context, deviceManager).hasPermission(Manifest.permission.RECORD_AUDIO)) {
+            Timber.e("Unable to start wake word engine - no audio permission")
             return
         }
 
@@ -174,13 +179,11 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
                     }
                 }
 
-                    is WakeWordEngineProvider.AudioResult.Audio -> {
-                        if (it.audio.size() > 0) {
-                            if (engine!!.isStreaming()) {
-                                onAudio(it)
-                            }
-                        }
+                is WakeWordEngineProvider.AudioResult.Audio -> {
+                    if (it.audio.size() > 0) {
+                        onAudio(it, engine!!.isStreaming())
                     }
+                }
 
                     is WakeWordEngineProvider.AudioResult.AudioLevel -> {
                         if (config.diagnosticsEnabled) {
@@ -245,7 +248,7 @@ abstract class SatelliteWakeWorkHandler(val context: Context, val config: APPCon
                 holdDetectionLevelJob?.cancel()
             }
             holdDetectionLevelJob = scope.launch {
-                delay(duration)
+                delay(duration.milliseconds)
                 if (!streamAudio) {
                     lastWakeWordDetectionScore = 0f
                 }

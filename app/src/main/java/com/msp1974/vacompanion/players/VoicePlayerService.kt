@@ -14,7 +14,7 @@ import timber.log.Timber
 
 
 @UnstableApi
-class VoicePlayerService() : Service() {
+class VoicePlayerService : Service() {
 
     private lateinit var audioManager: AudioManager
     private var mediaPlayer: AudioTrack? = null
@@ -35,8 +35,6 @@ class VoicePlayerService() : Service() {
         .setUsage(AudioAttributes.USAGE_NOTIFICATION)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
         .build()
-
-
 
     override fun onCreate() {
         super.onCreate()
@@ -140,7 +138,6 @@ class VoicePlayerService() : Service() {
 
                     AudioManager.AUDIOFOCUS_LOSS -> {
                         hasAudioFocus = false
-                        stop(true)
                     }
 
                     AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
@@ -148,11 +145,12 @@ class VoicePlayerService() : Service() {
                     }
 
                     AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                        hasAudioFocus = false
                         mediaPlayer?.setVolume(0.2f)
                     }
                 }
             }
-            .build();
+            .build()
 
         val result = audioManager.requestAudioFocus(focusRequest!!)
 

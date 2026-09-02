@@ -23,30 +23,22 @@ import timber.log.Timber
 import java.net.URL
 import androidx.core.net.toUri
 import androidx.lifecycle.viewModelScope
-import com.msp1974.vacompanion.data.NetworkStatus
+import com.msp1974.vacompanion.device.authentication.IAuthenticationService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class CustomWebViewClient(val viewModel: VAViewModel): WebViewClientCompat()  {
     val log = Logger()
-    val config = viewModel.config
-    val networkStatusManager = viewModel.networkStatusManager
+    val config = viewModel.deviceManager.config
     private val firebase = FirebaseManager.getInstance(config.context)
     private val resources = viewModel.resources
-    private var networkStatus = NetworkStatus.Available
 
     companion object {
 
         private const val APP_PREFIX = "app://"
         private const val INTENT_PREFIX = "intent:"
         private const val ERROR_URL = "file:///android_asset/web/error.html"
-    }
-
-    init {
-        viewModel.viewModelScope.launch {
-            networkStatusManager.networkStatus.collect {
-                networkStatus = it.status
-            }
-        }
     }
 
     override fun onRenderProcessGone(
@@ -77,20 +69,19 @@ class CustomWebViewClient(val viewModel: VAViewModel): WebViewClientCompat()  {
                 val activityContext = config.context.takeIf { it is Application || it is Activity } ?: return false
 
                 // If the url is our client id then capture the auth code and get an access token
-                if (it.contains(AuthUtils.CLIENT_URL)) {
-                    val authCode = AuthUtils.getReturnAuthCode(url)
+                if (it.contains(IAuthenticationService.CLIENT_ID)) {
+                    val authCode = url.toUri().getQueryParameter("code") ?: ""
                     if (authCode != "") {
                         // Get access token using auth token
-                        val auth = AuthUtils.authoriseWithAuthCode(AuthUtils.getHAUrl(config), authCode, !config.ignoreSSLErrors)
-                        if (auth.accessToken == "") {
-                            // Not authorised.  Send back to login screen
-                            view.loadUrl(AuthUtils.getAuthUrl(AuthUtils.getHAUrl(config)))
-                        } else {
-                            // Authorised. Load HA default dashboard
-                            config.accessToken = auth.accessToken
-                            config.refreshToken = auth.refreshToken
-                            config.tokenExpiry = auth.expires
-                            view.loadUrl(AuthUtils.getURL(AuthUtils.getHAUrl(config)))
+                        viewModel.viewModelScope.launch {
+                            viewModel.deviceManager.authenticationManager.getAccessToken(authCode)
+                            withContext(Dispatchers.Main) {
+                                if (config.accessToken != "") {
+                                    view.loadUrl(viewModel.deviceManager.authenticationManager.getHAUrl())
+                                } else {
+                                    view.loadUrl(viewModel.deviceManager.authenticationManager.getExternalAuthUrl())
+                                }
+                            }
                         }
                     }
                 } else if (it.startsWith(APP_PREFIX)) {
@@ -136,7 +127,6 @@ class CustomWebViewClient(val viewModel: VAViewModel): WebViewClientCompat()  {
     }
 
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-        Timber.d("Loading url: $url")
         if (url != ERROR_URL) {
             setPageLoadingState(PageLoadingStage.STARTED)
         }
@@ -144,6 +134,25 @@ class CustomWebViewClient(val viewModel: VAViewModel): WebViewClientCompat()  {
     }
 
     override fun onPageFinished(view: WebView?, url: String?) {
+        val haBaseUrl = viewModel.deviceManager.authenticationManager
+            .getBaseUrl()
+            .toString()
+            .removeSuffix("/")
+        if (
+            view is CustomWebView &&
+            !url.isNullOrBlank() &&
+            url.startsWith(haBaseUrl, ignoreCase = true) &&
+            !url.contains("/auth/authorize") &&
+            config.accessToken.isNotBlank() &&
+            config.refreshToken.isNotBlank()
+        ) {
+            // A reconnect can replace the page while a native refresh is in flight,
+            // losing the original JavaScript callback. Re-inject the current session
+            // after the replacement page is ready.
+            viewModel.viewModelScope.launch {
+                view.requestAuthorisation()
+            }
+        }
         if (url != ERROR_URL && viewModel.vacaState.value.webViewPageLoadingStage == PageLoadingStage.AUTHORISED) {
             Handler(Looper.getMainLooper()).postDelayed({
                 setPageLoadingState(PageLoadingStage.LOADED)

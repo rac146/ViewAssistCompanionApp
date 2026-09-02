@@ -21,6 +21,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.StrictMode
 import android.provider.Settings
+import android.view.MotionEvent
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -50,20 +51,21 @@ import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
-import com.msp1974.vacompanion.ui.VAViewModel
 import com.msp1974.vacompanion.broadcasts.BroadcastSender
-import com.msp1974.vacompanion.device.DeviceInfo
+import com.msp1974.vacompanion.device.DeviceManager
+import com.msp1974.vacompanion.device.ScreenOnMode
+import com.msp1974.vacompanion.device.ScreenUtils
 import com.msp1974.vacompanion.service.VAForegroundService
-import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.settings.BackgroundTaskStatus
+import com.msp1974.vacompanion.settings.PageLoadingStage
 import com.msp1974.vacompanion.ui.VADialog
+import com.msp1974.vacompanion.ui.VAViewModel
 import com.msp1974.vacompanion.ui.components.VADialog
 import com.msp1974.vacompanion.ui.layouts.BlackScreen
 import com.msp1974.vacompanion.ui.layouts.ConnectionScreen
 import com.msp1974.vacompanion.ui.layouts.SettingsLayout
 import com.msp1974.vacompanion.ui.layouts.WebViewScreen
 import com.msp1974.vacompanion.ui.theme.AppTheme
-import com.msp1974.vacompanion.utils.AuthUtils
 import com.msp1974.vacompanion.utils.CustomWebView
 import com.msp1974.vacompanion.utils.CustomWebViewClient
 import com.msp1974.vacompanion.utils.Event
@@ -72,9 +74,6 @@ import com.msp1974.vacompanion.utils.FirebaseManager
 import com.msp1974.vacompanion.utils.Helpers
 import com.msp1974.vacompanion.utils.Logger
 import com.msp1974.vacompanion.utils.Permissions
-import com.msp1974.vacompanion.device.ScreenUtils
-import com.msp1974.vacompanion.device.ScreenOnMode
-import com.msp1974.vacompanion.settings.PageLoadingStage
 import com.msp1974.vacompanion.utils.SoundControl
 import com.msp1974.vacompanion.utils.Updater
 import dagger.hilt.android.AndroidEntryPoint
@@ -83,16 +82,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
-import kotlin.getValue
 import kotlin.time.Duration.Companion.seconds
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
 
-    @Inject lateinit var config: APPConfig
-    @Inject lateinit var deviceInfo: DeviceInfo
+    @Inject lateinit var deviceManager: DeviceManager
+    private val deviceInfo get() = deviceManager.deviceInfo
 
     val viewModel: VAViewModel by viewModels()
+
+    private val config get() = deviceManager.config
 
     private val log = Logger()
     private var firebaseManager: FirebaseManager? = null
@@ -126,7 +126,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
 
         screen = ScreenUtils(this, config)
         updater = Updater(this)
-        permissions = Permissions(this, config, deviceInfo)
+        permissions = Permissions(this, deviceManager)
 
         var keepSplashScreen = true
 
@@ -142,16 +142,6 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
 
         onBackPressedDispatcher.addCallback(this, onBackButton)
         setFirebaseUserProperties()
-
-        log.i("#################################################################################################")
-        log.i("Starting View Assist Companion App")
-        log.i("Version ${config.version}")
-        log.i("Android version: ${Helpers.getAndroidVersion()}")
-        log.i("CPU: ${System.getProperty("os.arch")}")
-        log.i("Name: ${Helpers.getDeviceName()}")
-        log.i("Serial: ${Build.SERIAL}")
-        log.i("UUID: ${config.uuid}")
-        log.i("#################################################################################################")
 
         val policy = StrictMode.ThreadPolicy.Builder().permitAll().build()
         StrictMode.setThreadPolicy(policy)
@@ -232,11 +222,6 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         log.d("Checking permissions")
         updatePermissionStatus()
         if (!viewModel.vacaState.value.permissions.hasCorePermissions || !viewModel.vacaState.value.permissions.hasOptionalPermissions) {
-            // Need to get permissions
-            LocalBroadcastManager.getInstance(this).registerReceiver(satelliteBroadcastReceiver, IntentFilter().apply {
-                addAction(BroadcastSender.REQUEST_MISSING_PERMISSIONS)
-            })
-
             // Turn on screen for startup to show permission request
             screenOffStartUp = false
 
@@ -289,7 +274,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
     fun initWebView() {
         webViewClient = CustomWebViewClient(viewModel)
         webView = CustomWebView.getView(this)
-        webView.initialise(config, webViewClient)
+        webView.initialise(deviceManager, webViewClient)
         webView.layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -359,6 +344,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             addAction(BroadcastSender.WEBVIEW_CRASH)
             addAction(BroadcastSender.TOAST_MESSAGE)
             addAction(BroadcastSender.CLOSE_APP)
+            addAction(BroadcastSender.OPEN_PERMISSION_SCREEN)
         }
         LocalBroadcastManager.getInstance(this)
             .registerReceiver(satelliteBroadcastReceiver, filter)
@@ -384,12 +370,11 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             Timber.d("Broadcast received: ${intent.action}")
             when (intent.action) {
                 BroadcastSender.SATELLITE_STARTED -> {
-                    viewModel.setSatelliteRunning(true)
                     setScreenSettings()
                     webView.setZoomLevel(config.zoomLevel)
                     config.screenOn = screen.isScreenOn()
-                    val url = AuthUtils.getURL(AuthUtils.getHAUrl(config))
-                    log.d("Loading URL: $url")
+                    val url = deviceManager.authenticationManager.getHAUrl()
+                    Timber.d("Satellite started -> loading URL: $url")
                     webView.loadUrl(url)
                 }
                 BroadcastSender.SATELLITE_CLIENT_UPDATED -> {
@@ -399,7 +384,6 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                     }
                 }
                 BroadcastSender.SATELLITE_STOPPED -> {
-                    viewModel.setSatelliteRunning(false)
                     if (!config.backgroundTaskRunning) {
                         finishAndRemoveTask()
                     }
@@ -408,18 +392,22 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                     applyScreenMode(ScreenOnMode.ON)
                     runUpdateRoutine()
                 }
-                BroadcastSender.REQUEST_MISSING_PERMISSIONS -> {
+                BroadcastSender.RUN_UPDATE -> {
+                    applyScreenMode(ScreenOnMode.ON)
+                    downloadAndInstallUpdate()
+                }
+                BroadcastSender.OPEN_PERMISSION_SCREEN -> {
                     val specificPermission = intent.getStringExtra("extra")
                     if (specificPermission != null) {
-                        requestSpecificPermission(specificPermission)
+                        openPermissionScreen(specificPermission)
                     } else {
                         checkAndRequestPermissions()
                     }
                 }
                 BroadcastSender.WEBVIEW_CRASH -> {
                     initWebView()
-                    val url = AuthUtils.getURL(AuthUtils.getHAUrl(config))
-                    log.d("Loading URL: $url")
+                    val url = deviceManager.authenticationManager.getHAUrl()
+                    log.d("Webview crash -> loading URL: $url")
                     webView.loadUrl(url)
                 }
                 BroadcastSender.CLOSE_APP -> {
@@ -439,8 +427,8 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 }
                 NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED -> {
                     val dndEnabled = SoundControl.isDoNotDisturbEnabled(context)
-                    if (config.doNotDisturb != dndEnabled) {
-                        config.doNotDisturb = dndEnabled
+                    if (deviceManager.status.value.isDND != dndEnabled) {
+                        deviceManager.updateDNDStatus(dndEnabled)
                     }
                 }
                 BroadcastSender.TOAST_MESSAGE -> {
@@ -495,12 +483,23 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
 
     override fun onDestroy() {
         log.d("Main Activity destroyed")
+        try {
+            screen.setScreenTimeout(config.screenTimeout)
+            config.eventBroadcaster.removeListener(this)
+            LocalBroadcastManager.getInstance(this).unregisterReceiver(satelliteBroadcastReceiver)
+            unregisterReceiver(satelliteBroadcastReceiver)
+        } catch (e: Exception) {
+            Timber.e("Error destroying MainActivity: ${e.message}")
+        } finally {
+            super.onDestroy()
+        }
+    }
 
-        screen.setScreenTimeout(config.screenTimeout)
-        config.eventBroadcaster.removeListener(this)
-        LocalBroadcastManager.getInstance(this).unregisterReceiver(satelliteBroadcastReceiver)
-        unregisterReceiver(satelliteBroadcastReceiver)
-        super.onDestroy()
+    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        if (config.screenSaver && config.screenSaverDisableOnTouch) {
+            config.screenSaver = false
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     private fun terminateApp() {
@@ -511,11 +510,10 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         if ( config.backgroundTaskStatus != BackgroundTaskStatus.NOT_STARTED ) {
             log.w("Background task already running.  Not starting from MainActivity")
             firebaseManager?.logEvent(FirebaseManager.MAIN_ACTIVITY_BACKGROUND_TASK_ALREADY_RUNNING, mapOf())
-            if (config.isRunning) {
-                viewModel.setSatelliteRunning(true)
+            if (viewModel.vacaState.value.satelliteRunning) {
                 webView.setZoomLevel(config.zoomLevel)
-                val url = AuthUtils.getURL(AuthUtils.getHAUrl(config))
-                log.d("Loading URL: $url")
+                val url = deviceManager.authenticationManager.getHAUrl()
+                log.d("Run background tasks -> loading URL: $url")
                 webView.loadUrl(url)
             } else {
                 setStatus(getString(R.string.status_waiting_for_connection))
@@ -649,19 +647,23 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
 
     fun setDarkMode(isDark: Boolean) {
         log.d("Setting dark mode: $isDark")
+        try {
+            if (isDark) {
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
+            } else {
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
+            }
 
-        if (isDark) {
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
-        } else{
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
-        }
-
-        // Set device dark mode
-        val uiModeManager = getSystemService(UI_MODE_SERVICE) as UiModeManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            uiModeManager.setApplicationNightMode(if (isDark) UiModeManager.MODE_NIGHT_YES else UiModeManager.MODE_NIGHT_NO)
-        } else {
-            uiModeManager.nightMode = if (isDark) UiModeManager.MODE_NIGHT_YES else UiModeManager.MODE_NIGHT_NO
+            // Set device dark mode
+            val uiModeManager = getSystemService(UI_MODE_SERVICE) as UiModeManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                uiModeManager.setApplicationNightMode(if (isDark) UiModeManager.MODE_NIGHT_YES else UiModeManager.MODE_NIGHT_NO)
+            } else {
+                uiModeManager.nightMode =
+                    if (isDark) UiModeManager.MODE_NIGHT_YES else UiModeManager.MODE_NIGHT_NO
+            }
+        } catch (e: Exception) {
+            log.w("Error setting dark mode: ${e.message}")
         }
 
         webView.refreshDarkMode(isDark)
@@ -685,16 +687,28 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         viewModel.setPermissionsStatus(corePermissions, optionalPermissions)
     }
 
-    private fun requestSpecificPermission(permission: String) {
-        val requestID = when (permission) {
-            Manifest.permission.RECORD_AUDIO -> RECORD_AUDIO_PERMISSIONS_REQUEST
-            Manifest.permission.CAMERA -> CAMERA_PERMISSIONS_REQUEST
-            Manifest.permission.POST_NOTIFICATIONS -> NOTIFICATION_PERMISSIONS_REQUEST
-            Manifest.permission.WRITE_EXTERNAL_STORAGE -> WRITE_EXTERNAL_STORAGE_PERMISSIONS_REQUEST
-            else -> 0
-        }
-        if (requestID != 0) {
-            ActivityCompat.requestPermissions(this, arrayOf(permission), requestID)
+    private fun openPermissionScreen(permission: String) {
+        Timber.d("Opening permission screen: $permission")
+        when (permission) {
+            Manifest.permission.RECORD_AUDIO -> ActivityCompat.requestPermissions(this, arrayOf(permission), RECORD_AUDIO_PERMISSIONS_REQUEST)
+            Manifest.permission.CAMERA -> ActivityCompat.requestPermissions(this, arrayOf(permission), CAMERA_PERMISSIONS_REQUEST)
+            Manifest.permission.POST_NOTIFICATIONS -> ActivityCompat.requestPermissions(this, arrayOf(permission), NOTIFICATION_PERMISSIONS_REQUEST)
+            Manifest.permission.WRITE_EXTERNAL_STORAGE -> ActivityCompat.requestPermissions(this, arrayOf(permission), WRITE_EXTERNAL_STORAGE_PERMISSIONS_REQUEST)
+            Manifest.permission.BLUETOOTH_CONNECT -> ActivityCompat.requestPermissions(this, arrayOf(permission), BLUETOOTH_PERMISSIONS_REQUEST)
+            "WRITE_SETTINGS" -> {
+                val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, "package:$packageName".toUri())
+                onWriteSettingsPermissionActivityResult.launch(intent)
+            }
+            "NOTIFICATION_POLICY" -> {
+                val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+                onNotificationAccessPolicyPermissionActivityResult.launch(intent)
+            }
+            "DEVICE_ADMIN" -> {
+                val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+                intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, ComponentName(this, VACADeviceAdminReceiver::class.java))
+                intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "This application requires Device Admin rights to be able to control the screen.")
+                onDeviceAdminPermissionActivityResult.launch(intent)
+            }
         }
     }
 
@@ -801,6 +815,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         private const val CAMERA_PERMISSIONS_REQUEST = 250
         private const val NOTIFICATION_PERMISSIONS_REQUEST = 300
         private const val WRITE_EXTERNAL_STORAGE_PERMISSIONS_REQUEST = 400
+        private const val BLUETOOTH_PERMISSIONS_REQUEST = 500
     }
 
     private val onWriteSettingsPermissionActivityResult = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -818,7 +833,6 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 setPositiveButton("Got it") { _: DialogInterface?, _: Int ->
                     try {
                         val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS)
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         onWriteSettingsPermissionActivityResult.launch(intent)
                     } catch (e: Exception) {
                         log.i("Device does not require explicit permission")
@@ -885,7 +899,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         }
     }
 
-    private fun checkForUpdate() {
+    private suspend fun checkForUpdate() {
         try {
             Timber.d("Checking for update")
             if (updater.isUpdateAvailable(config.minRequiredApkVersion)) {
@@ -934,11 +948,10 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 } else {
                     val intent = Intent(Intent.ACTION_VIEW)
                     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     intent.setDataAndType(
                         uri.toUri(),
                         "application/vnd.android.package-archive"
-                    );
+                    )
                     onUpdateAppActivityResult.launch(intent)
                 }
             } else {

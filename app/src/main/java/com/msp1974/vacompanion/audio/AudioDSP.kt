@@ -3,6 +3,7 @@ package com.msp1974.vacompanion.audio
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
+import kotlin.math.log10
 
 class AudioDSP {
 
@@ -15,7 +16,23 @@ class AudioDSP {
     fun audioLevel(audioBuffer: FloatArray): Float {
         return audioBuffer.map { i -> abs(i) }.average().toFloat()
     }
-    
+
+    /** Converts a linear 0..1 [audioLevel] reading to dBFS, floored at [AUDIO_LEVEL_FLOOR_DBFS]. */
+    fun linearToDbfs(level: Float): Float {
+        val magnitude = abs(level)
+        return if (magnitude > MIN_LINEAR_LEVEL) {
+            (20f * log10(magnitude)).coerceAtLeast(AUDIO_LEVEL_FLOOR_DBFS)
+        } else {
+            AUDIO_LEVEL_FLOOR_DBFS
+        }
+    }
+
+    companion object {
+        /** Displayed as "silence" - quiet enough that the exact dB figure isn't meaningful. */
+        const val AUDIO_LEVEL_FLOOR_DBFS = -80f
+        private const val MIN_LINEAR_LEVEL = 1e-6f
+    }
+
     fun reduceVolume(audioBuffer: ByteArray, reductionFactor: Float): ByteArray {
         val shortArray = byteArrayToShortArray(audioBuffer)
         for (i in shortArray.indices) {
@@ -70,5 +87,10 @@ class AudioDSP {
             byteBuffer[i * 2 + 1] = (value shr 8).toByte()
         }
         return byteBuffer
+    }
+
+    fun shortArrayTo16BitPCMFloat(audioBuffer: ShortArray): FloatArray {
+        val floatBuffer = audioBuffer.map { it.toFloat() }.toFloatArray()
+        return floatBuffer
     }
 }

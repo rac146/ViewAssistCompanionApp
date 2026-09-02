@@ -1,7 +1,7 @@
 package com.msp1974.vacompanion.satellite
 
 import android.content.Context
-import com.msp1974.vacompanion.settings.APPConfig
+import com.msp1974.vacompanion.device.DeviceManager
 import com.msp1974.vacompanion.ui.VAViewModel
 import com.msp1974.vacompanion.utils.Helpers.Companion.capitalizeWords
 import com.msp1974.vacompanion.utils.DownloadStatus
@@ -16,10 +16,11 @@ import kotlin.time.Duration.Companion.milliseconds
 
 class SatelliteCustomFilesHandler(
     val context: Context,
-    val config: APPConfig,
+    val deviceManager: DeviceManager,
     val viewModel: VAViewModel? = null
 ) {
-    private var customFileDownloader = CustomFileDownloader(context, config)
+    private var config = deviceManager.config
+    private var customFileDownloader = CustomFileDownloader(context, deviceManager)
 
     suspend fun downloadAllCustomFiles(force: Boolean = false): Boolean {
         var hasDownloaded = false
@@ -64,7 +65,7 @@ class SatelliteCustomFilesHandler(
                     }
                     
                     if (missingExtensions.isNotEmpty()) {
-                        Timber.i("Download of $name ($wakeWordModelType) files needed: $missingExtensions")
+                        Timber.d("Download of $name ($wakeWordModelType) files needed: $missingExtensions")
                         val displayName = name.replace("_", " ").capitalizeWords()
                         customFileDownloader.downloadWakeWordModel(wakeWordModelType, name, missingExtensions).collect { status ->
                             handleDownloadStatus(displayName, status)
@@ -88,7 +89,7 @@ class SatelliteCustomFilesHandler(
                     }
 
                     if (downloadNeeded) {
-                        Timber.i("Download of $name ($wakeWordModelType) needed")
+                        Timber.d("Download of $name ($wakeWordModelType) needed")
                         val displayName = name.replace("_", " ").capitalizeWords()
                         customFileDownloader.downloadWakeWordModel(wakeWordModelType, name, extensions).collect { status ->
                             handleDownloadStatus(displayName, status)
@@ -120,7 +121,7 @@ class SatelliteCustomFilesHandler(
                 val fileExists = java.io.File("${context.filesDir}/${CustomFileDownloader.CUSTOM_DIR}/$subDir", fileName).exists()
 
                 if (force || !fileExists) {
-                    Timber.i("Download of $subDir/$fileName needed")
+                    Timber.d("Download of $subDir/$fileName needed")
                     val displayName = name.replace("_", " ").capitalizeWords()
                     customFileDownloader.downloadCustomFile(subDir, fileName).collect { status ->
                         handleDownloadStatus(displayName, status)

@@ -10,9 +10,9 @@ import androidx.datastore.core.Closeable
 import androidx.lifecycle.application
 import androidx.lifecycle.viewModelScope
 import com.msp1974.vacompanion.R
+import com.msp1974.vacompanion.audio.AudioDSP
 import com.msp1974.vacompanion.broadcasts.BroadcastSender
-import com.msp1974.vacompanion.data.NetworkStatus
-import com.msp1974.vacompanion.data.NetworkStatusManager
+import com.msp1974.vacompanion.device.sensors.NetworkStatus
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.settings.PageLoadingStage
 import com.msp1974.vacompanion.utils.Event
@@ -29,21 +29,21 @@ import com.msp1974.vacompanion.wakeword.AvailableWakeWords
 import com.msp1974.vacompanion.utils.CustomFileDownloader
 import com.msp1974.vacompanion.utils.WakeWordType
 import com.msp1974.vacompanion.utils.Network
+import com.msp1974.vacompanion.utils.Updater
+import com.msp1974.vacompanion.device.DeviceManager
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.dropWhile
-import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 import androidx.core.net.toUri
-import com.msp1974.vacompanion.device.DeviceInfo
 import com.msp1974.vacompanion.device.MotionDetectionEngine.Companion.MOTION_INTERVAL_TIMEOUT
+import com.msp1974.vacompanion.device.sensors.SensorState
+import com.msp1974.vacompanion.satellite.AudioLogEntry
+import com.msp1974.vacompanion.utils.Helpers.Companion.capitalizeWords
 import com.msp1974.vacompanion.utils.WebViewGestureDetector
 
   class VADialog(
@@ -84,7 +84,7 @@ data class DiagnosticInfo(
     var show: Boolean = false,
     var engine: String = "",
     var muted: Boolean = false,
-    var audioLevel: Float = 0f,
+    var audioLevel: Float = AudioDSP.AUDIO_LEVEL_FLOOR_DBFS,
     var detectionThreshold: Float = 0f,
     var detectionLevel: Float = 0f,
     var mode: AudioRouteOption = AudioRouteOption.NONE,
@@ -95,7 +95,10 @@ data class DiagnosticInfo(
     var hasSpeakerEnrollment: Boolean = false,
     var lastMotionTimestamp: Long = 0,
     var motionInterval: Int = 10000,
-    var motionDetectionMode: String = "motion"
+    var motionDetectionMode: String = "motion",
+    var activeMic: String = "",
+    var recordingWakewordEnabled: Boolean = false,
+    var audioLog: MutableMap<Long, AudioLogEntry> = mutableMapOf()
 )
 
 
@@ -117,6 +120,9 @@ data class State(
     var orientation: Int = Configuration.ORIENTATION_LANDSCAPE,
 
     var launchOnBoot: Boolean = true,
+    // Single source of truth for "is the satellite running" on the UI side - mirrors
+    // WyomingServerStatus.satelliteRunning (itself derived from Satellite.state) and is
+    // what MainActivity's Compose tree keys off to decide whether to show WebViewScreen.
     var satelliteRunning: Boolean = false,
     var darkMode: Boolean = false,
     var isDND: Boolean = false,
@@ -139,38 +145,70 @@ data class State(
     var cameraStreamActive: Boolean = false,
     var motionDetectionSensitivity: Int = 0,
     var motionDetectionMode: String = "motion",
-    var speakerEnrollmentStatus: String = ""
+    var speakerEnrollmentStatus: String = "",
+    var sensorState: SensorState = SensorState()
     )
 
 @HiltViewModel
 class VAViewModel @Inject constructor(
     application: Application,
-    val config: APPConfig,
-    val deviceInfo: DeviceInfo,
-    val networkStatusManager: NetworkStatusManager
+    val deviceManager: DeviceManager,
 ): ViewModelBase(application), EventListener, Closeable {
 
+    val config: APPConfig = deviceManager.config
+    val deviceInfo = deviceManager.deviceInfo
     private val _vacaState = MutableStateFlow(State())
     val vacaState: StateFlow<State> = _vacaState.asStateFlow()
 
     var resources: Resources = application.resources
-    var permissions: Permissions = Permissions(application.applicationContext, config, deviceInfo)
+    var permissions: Permissions = Permissions(application.applicationContext, deviceManager)
     val network = Network(application.applicationContext)
-    val customFileDownloader = CustomFileDownloader(application, config)
-
-    val changedNetworkStatus = networkStatusManager.networkStatus
-        .dropWhile { it.status == NetworkStatus.Available }
-        .shareIn(viewModelScope, SharingStarted.Eagerly, 1)
+    val customFileDownloader = CustomFileDownloader(application, deviceManager)
+    val updater = Updater(application.applicationContext)
 
     init {
         _vacaState.value = State()
 
+        //TODO: put under device manager
         network.setWifiLock()
 
         config.eventBroadcaster.addListener(this)
         initValues()
-        buildAppInfo()
-        startNetworkMonitor()
+
+        viewModelScope.launch {
+            deviceManager.status.collect { status ->
+                val oldNetworkState = _vacaState.value.isNetworkConnected
+                val wasRunning = _vacaState.value.satelliteRunning
+                val isRunning = status.wyoming.satelliteRunning
+
+                _vacaState.update { currentState ->
+                    currentState.copy(
+                        isNetworkConnected = status.network.status == NetworkStatus.Available,
+                        satelliteRunning = isRunning,
+                        isDND = status.isDND,
+                        darkMode = status.darkMode,
+                        webViewPageLoadingStage = status.webViewPageLoadingStage,
+                        cameraStreamActive = status.cameraStreamActive,
+                        screenBlank = status.screenBlank,
+                        diagnosticInfo = currentState.diagnosticInfo.copy(
+                            muted = status.isMuted
+                        ),
+                        showMenu = if (wasRunning && !isRunning) false else currentState.showMenu,
+                        menuOpenedByAction = if (wasRunning && !isRunning) false else currentState.menuOpenedByAction,
+                        showSettings = if (wasRunning && !isRunning) false else currentState.showSettings,
+                        sensorState = status.sensors
+                    )
+                }
+
+                if (wasRunning && !isRunning) {
+                    config.settingsOpen = false
+                }
+
+                if (oldNetworkState != _vacaState.value.isNetworkConnected) {
+                    onNetworkStateChange(status.network.status)
+                }
+            }
+        }
     }
 
     fun initValues() {
@@ -190,18 +228,12 @@ class VAViewModel @Inject constructor(
                 )
             )
         }
+
+        buildAppInfo()
     }
 
     override fun close() {
         network.releaseWifiLock()
-    }
-
-    fun startNetworkMonitor() {
-        viewModelScope.launch(Dispatchers.Default) {
-            changedNetworkStatus.collect {
-                onNetworkStateChange(it.status)
-            }
-        }
     }
 
     var launchOnBoot: Boolean
@@ -220,11 +252,11 @@ class VAViewModel @Inject constructor(
         when (event.eventName) {
             "isMuted" -> {
                 val isMuted = event.newValue as Boolean
+                deviceManager.updateMuteStatus(isMuted)
                 _vacaState.update { currentState ->
                     currentState.copy(
                         diagnosticInfo = currentState.diagnosticInfo.copy(
-                            muted = isMuted,
-                            audioLevel = 0f,
+                            audioLevel = AudioDSP.AUDIO_LEVEL_FLOOR_DBFS,
                             detectionLevel = 0f,
                             mode = if (isMuted || config.wakeWord == "none") AudioRouteOption.NONE else AudioRouteOption.DETECT
                         )
@@ -236,7 +268,7 @@ class VAViewModel @Inject constructor(
                     val wakeWord = event.newValue as String
                     currentState.copy(
                         diagnosticInfo = currentState.diagnosticInfo.copy(
-                            wakeWord = wakeWord,
+                            wakeWord = wakeWord.replace("_", " ").capitalizeWords(),
                         )
                     )
                 }
@@ -269,24 +301,25 @@ class VAViewModel @Inject constructor(
             "pairedDeviceID" -> buildAppInfo()
             "openSettings" -> onOpenSettingsAction()
             "darkMode" -> {
-                _vacaState.update { currentState ->
-                    currentState.copy(
-                        darkMode = event.newValue as Boolean
-                    )
-                }
+                deviceManager.updateDarkModeStatus(event.newValue as Boolean)
             }
             "doNotDisturb" -> {
-                _vacaState.update { currentState ->
-                    currentState.copy(
-                        isDND = event.newValue as Boolean
-                    )
-                }
+                deviceManager.updateDNDStatus(event.newValue as Boolean)
             }
             "diagnosticsEnabled" -> {
                 _vacaState.update { currentState ->
                     currentState.copy(
                         diagnosticInfo = _vacaState.value.diagnosticInfo.copy(
                             show = event.newValue as Boolean
+                        )
+                    )
+                }
+            }
+            "recordingWakewordEnabled" -> {
+                _vacaState.update { currentState ->
+                    currentState.copy(
+                        diagnosticInfo = currentState.diagnosticInfo.copy(
+                            recordingWakewordEnabled = event.newValue as Boolean
                         )
                     )
                 }
@@ -395,6 +428,7 @@ class VAViewModel @Inject constructor(
             val filter = if (enabled) NotificationManager.INTERRUPTION_FILTER_PRIORITY else NotificationManager.INTERRUPTION_FILTER_ALL
             notificationManager.setInterruptionFilter(filter)
             config.doNotDisturb = enabled
+            deviceManager.updateDNDStatus(enabled)
         } else {
             requestNotificationPolicyAccess()
         }
@@ -410,14 +444,6 @@ class VAViewModel @Inject constructor(
         config.settingsOpen = true
     }
 
-    fun setSatelliteRunning(isRunning: Boolean) {
-        _vacaState.update { currentState ->
-            currentState.copy(
-                satelliteRunning = isRunning
-            )
-        }
-    }
-
     fun setStatusMessage(statusMessage: String) {
         _vacaState.update { currentState ->
             currentState.copy(
@@ -427,29 +453,15 @@ class VAViewModel @Inject constructor(
     }
 
     fun setScreenBlank(screenOn: Boolean) {
-        _vacaState.update { currentState ->
-            currentState.copy(
-                screenBlank = screenOn
-            )
-        }
+        deviceManager.updateScreenBlankStatus(screenOn)
     }
 
     fun setWebViewPageLoadingState(stage: PageLoadingStage) {
         Timber.d("WebView page loading state: $stage")
-        _vacaState.update { currentState ->
-            currentState.copy(
-                webViewPageLoadingStage = stage
-            )
-        }
+        deviceManager.updateWebViewPageLoadingStage(stage)
     }
 
     fun onNetworkStateChange(status: NetworkStatus) {
-        Timber.d("Network status: $status")
-        _vacaState.update { currentState ->
-            currentState.copy(
-                isNetworkConnected = status == NetworkStatus.Available
-            )
-        }
         when (status) {
             NetworkStatus.Unavailable  -> setStatusMessage(application.getString(R.string.status_waiting_for_network))
             NetworkStatus.Available -> setStatusMessage(getString(application.applicationContext, R.string.status_waiting_for_connection))
@@ -465,11 +477,15 @@ class VAViewModel @Inject constructor(
         config.eventBroadcaster.notifyEvent(Event("hideSystemUI", "", ""))
     }
 
+    fun onEvent(event: Event) {
+        config.eventBroadcaster.notifyEvent(event)
+    }
+
     private fun buildAppInfo() {
        _vacaState.update { currentState ->
             currentState.copy(
                 appInfo = mapOf(
-                    "Version" to config.version,
+                    "Version" to deviceInfo.software.appVersion,
                     "IP Address" to (if (Helpers.isNetworkAvailable(config.context)) Helpers.getIpv4HostAddress() else ""),
                     "Port" to APPConfig.SERVER_PORT.toString(),
                     "Device ID" to config.uuid,
@@ -480,11 +496,54 @@ class VAViewModel @Inject constructor(
     }
 
     fun checkForUpdate() {
-        BroadcastSender.sendBroadcast(config.context, BroadcastSender.VERSION_MISMATCH)
+        viewModelScope.launch {
+            try {
+                val latest = updater.getLatestRelease(forceUpdate = true)
+                val current = deviceInfo.software.appVersion
+
+                if (updater.isUpdateAvailable()) {
+                    showUpdateDialog(
+                        VADialog(
+                            title = "Update Available",
+                            message = "A new version of View Assist Companion is available (v${latest.version}). Would you like to update from v$current?",
+                            confirmText = "Update",
+                            dismissText = "Cancel",
+                            confirmCallback = {
+                                BroadcastSender.sendBroadcast(config.context, BroadcastSender.RUN_UPDATE)
+                            },
+                            dismissCallback = {}
+                        )
+                    )
+                } else {
+                    showUpdateDialog(
+                        VADialog(
+                            title = "Up to Date",
+                            message = "You are already using the latest version of View Assist Companion (v$current).",
+                            confirmText = "OK",
+                            dismissText = "",
+                            confirmCallback = {},
+                            dismissCallback = {}
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                Timber.e("Error checking for update: ${e.message}")
+                showUpdateDialog(
+                    VADialog(
+                        title = "Update Check Failed",
+                        message = "An error occurred while checking for updates: ${e.message}",
+                        confirmText = "OK",
+                        dismissText = "",
+                        confirmCallback = {},
+                        dismissCallback = {}
+                    )
+                )
+            }
+        }
     }
 
     fun requestPermissions() {
-        BroadcastSender.sendBroadcast(config.context, BroadcastSender.REQUEST_MISSING_PERMISSIONS)
+        BroadcastSender.sendBroadcast(config.context, BroadcastSender.OPEN_PERMISSION_SCREEN)
     }
 
     fun refreshPermissionsStatus() {
@@ -514,7 +573,7 @@ class VAViewModel @Inject constructor(
             openAppSettings()
         } else {
             // For runtime permissions, we trigger the system request
-            BroadcastSender.sendBroadcast(config.context, BroadcastSender.REQUEST_MISSING_PERMISSIONS, permission)
+            BroadcastSender.sendBroadcast(config.context, BroadcastSender.OPEN_PERMISSION_SCREEN, permission)
         }
     }
 
@@ -529,37 +588,15 @@ class VAViewModel @Inject constructor(
     }
 
     fun requestWriteSettingsPermission() {
-        val intent = android.content.Intent(
-            android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS,
-            "package:${config.context.packageName}".toUri()
-        ).apply {
-            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        config.context.startActivity(intent)
+        BroadcastSender.sendBroadcast(config.context, BroadcastSender.OPEN_PERMISSION_SCREEN, "WRITE_SETTINGS")
     }
 
     fun requestNotificationPolicyAccess() {
-        val intent = android.content.Intent(
-            android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS
-        ).apply {
-            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        config.context.startActivity(intent)
+        BroadcastSender.sendBroadcast(config.context, BroadcastSender.OPEN_PERMISSION_SCREEN, "NOTIFICATION_POLICY")
     }
 
     fun requestDeviceAdmin() {
-        val intent = android.content.Intent(android.app.admin.DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-            putExtra(
-                android.app.admin.DevicePolicyManager.EXTRA_DEVICE_ADMIN,
-                android.content.ComponentName(config.context, com.msp1974.vacompanion.VACADeviceAdminReceiver::class.java)
-            )
-            putExtra(
-                android.app.admin.DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                "Device admin is required to allow the app to lock/blank the screen."
-            )
-            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        config.context.startActivity(intent)
+        BroadcastSender.sendBroadcast(config.context, BroadcastSender.OPEN_PERMISSION_SCREEN, "DEVICE_ADMIN")
     }
 
     fun setPermissionsStatus(core: Boolean, optional: Boolean) {
@@ -626,19 +663,15 @@ class VAViewModel @Inject constructor(
     }
 
     fun setCameraStreamActive(active: Boolean) {
-        _vacaState.update { currentState ->
-            currentState.copy(
-                cameraStreamActive = active
-            )
-        }
         config.cameraStreamActive = active
+        deviceManager.updateCameraStreamActive(active)
         config.eventBroadcaster.notifyEvent(Event("cameraStreamActive", "", active))
     }
 
     fun refreshCustomFiles() {
         viewModelScope.launch {
-            val wakeSounds = AvailableWakeSounds(app, config).get()
-            val alarms = AvailableAlarms(app, config).get()
+            val wakeSounds = AvailableWakeSounds(app, deviceManager).get()
+            val alarms = AvailableAlarms(app, deviceManager).get()
             
             // Update config for server info (includes assets)
             config.availableWakeSounds = wakeSounds
@@ -675,7 +708,7 @@ class VAViewModel @Inject constructor(
                 )
             }
             try {
-                val handler = SatelliteCustomFilesHandler(app, config, this@VAViewModel)
+                val handler = SatelliteCustomFilesHandler(app, deviceManager, this@VAViewModel)
                 handler.syncAllCustomFiles()
                 refreshCustomFiles()
                 refreshAvailableWakeWords()

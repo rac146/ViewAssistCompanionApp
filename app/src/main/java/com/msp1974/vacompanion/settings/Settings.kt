@@ -56,15 +56,19 @@ class APPConfig @Inject constructor(val context: Context) {
 
     // Constant values
     val name = NAME
-    val version = getPackageInfo(context, context.packageName)?.versionName.toString()
+    //val version = getPackageInfo(context, context.packageName)?.versionName.toString()
     val serverPort = SERVER_PORT
 
     // Versions
     var integrationVersion: String = "0.0.0"
-    var minRequiredApkVersion: String = version
+    var minRequiredApkVersion: String = getPackageInfo(context, context.packageName)?.versionName.toString()
 
 
     // In memory only settings
+    var accessToken: String = ""
+    var tokenExpiry: Long = 0
+
+
     var initSettings: Boolean = false
     var homeAssistantConnectedIP: String = ""
     var homeAssistantHTTPPort: Int = DEFAULT_HA_HTTP_PORT
@@ -171,6 +175,10 @@ class APPConfig @Inject constructor(val context: Context) {
         onValueChangedListener(property, oldValue, newValue)
     }
 
+    var alarmVolume: Int by Delegates.observable(DEFAULT_ALARM_VOLUME) { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
     var duckingVolume: Int by Delegates.observable(DEFAULT_DUCKING_VOLUME) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
@@ -212,6 +220,10 @@ class APPConfig @Inject constructor(val context: Context) {
     }
 
     var debugWakeClipDumpEnabled: Boolean by Delegates.observable(false) { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
+    var recordingWakewordEnabled: Boolean by Delegates.observable(false) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
 
@@ -288,6 +300,10 @@ class APPConfig @Inject constructor(val context: Context) {
         onValueChangedListener(property, oldValue, newValue)
     }
 
+    var screenSaverDisableOnTouch: Boolean by Delegates.observable(true) { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
     var screenOrientationMode: String by Delegates.observable("auto") { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
@@ -321,17 +337,21 @@ class APPConfig @Inject constructor(val context: Context) {
         get() = this.sharedPrefs.getString("uuid", getUUID()) ?: ""
         set(value) = this.sharedPrefs.edit { putString("uuid", value) }
 
+    /*
     var accessToken: String
         get() = this.sharedPrefs.getString("auth_token", "") ?: ""
         set(value) = this.sharedPrefs.edit { putString("auth_token", value) }
+
+        var tokenExpiry: Long
+        get() = this.sharedPrefs.getLong("token_expiry", 0)
+        set(value) = this.sharedPrefs.edit { putLong("token_expiry", value) }
+    */
 
     var refreshToken: String
         get() = this.sharedPrefs.getString("refresh_token", "") ?: ""
         set(value) = this.sharedPrefs.edit { putString("refresh_token", value) }
 
-    var tokenExpiry: Long
-        get() = this.sharedPrefs.getLong("token_expiry", 0)
-        set(value) = this.sharedPrefs.edit { putLong("token_expiry", value) }
+
 
     private var pairedDeviceId: String
         get() = this.sharedPrefs.getString("paired_device_id", "") ?: ""
@@ -344,7 +364,7 @@ class APPConfig @Inject constructor(val context: Context) {
     fun processSettings(settingString: String) {
         initSettings = true
         val settings = Json.parseToJsonElement(settingString).jsonObject
-        
+
         settings["ha_port"]?.jsonPrimitive?.intOrNull?.let { homeAssistantHTTPPort = it }
         settings["ha_url"]?.jsonPrimitive?.contentOrNull?.let { homeAssistantURL = it }
         settings["ha_dashboard"]?.jsonPrimitive?.contentOrNull?.let { homeAssistantDashboard = it }
@@ -357,6 +377,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["raw_proximity_threshold"]?.jsonPrimitive?.intOrNull?.let { rawProximitySensorThreshold = it }
         settings["notification_volume"]?.jsonPrimitive?.floatOrNull?.let { notificationVolume = it.toInt() }
         settings["music_volume"]?.jsonPrimitive?.floatOrNull?.let { musicVolume = it.toInt() }
+        settings["alarm_volume"]?.jsonPrimitive?.floatOrNull?.let { alarmVolume = it.toInt() }
         settings["ducking_volume"]?.jsonPrimitive?.floatOrNull?.let { duckingVolume = it.toInt() }
         settings["mic_gain"]?.jsonPrimitive?.intOrNull?.let { micGain = it }
         settings["mute"]?.jsonPrimitive?.booleanOrNull?.let { isMuted = it }
@@ -385,6 +406,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["screen_timeout"]?.jsonPrimitive?.intOrNull?.let { screenTimeout = it * 1000 }
         settings["bump_sensitivity"]?.jsonPrimitive?.floatOrNull?.let { bumpSensitivity = it / 10 }
         settings["screen_saver"]?.jsonPrimitive?.booleanOrNull?.let { screenSaver = it }
+        settings["screen_saver_disable_on_touch"]?.jsonPrimitive?.booleanOrNull?.let { screenSaverDisableOnTouch = it }
         settings["screen_orientation_mode"]?.jsonPrimitive?.contentOrNull?.let { screenOrientationMode = it }
         settings["continue_conversation"]?.jsonPrimitive?.booleanOrNull?.let { continueConversation = it }
         settings["speaker_verification_enabled"]?.jsonPrimitive?.booleanOrNull?.let { speakerVerificationEnabled = it }
@@ -451,6 +473,7 @@ class APPConfig @Inject constructor(val context: Context) {
         const val DEFAULT_WAKE_WORD_THRESHOLD = 0.6f
         const val DEFAULT_NOTIFICATION_VOLUME = 10
         const val DEFAULT_MUSIC_VOLUME = 10
+        const val DEFAULT_ALARM_VOLUME = 10
         const val DEFAULT_SCREEN_BRIGHTNESS = 0.5f
         const val DEFAULT_SCREEN_AUTO_BRIGHTNESS = true
         const val DEFAULT_DUCKING_VOLUME = 2
@@ -462,5 +485,6 @@ class APPConfig @Inject constructor(val context: Context) {
         const val AUDIO_BACKEND_WEBRTC_APM = "webrtc_apm"
         const val DEFAULT_AUDIO_BACKEND = AUDIO_BACKEND_WEBRTC_APM
         const val GITHUB_API_URL = "https://api.github.com/repos/msp1974/ViewAssist_Companion_App/releases"
+        const val GITHUB_RELEASES_URL = "https://github.com/msp1974/ViewAssist_Companion_App/releases"
     }
 }
