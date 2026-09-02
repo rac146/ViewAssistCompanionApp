@@ -122,8 +122,8 @@ open class MicroWakeWordEngine (
                         }
 
                         // Always run audio through the models, even if not currently streaming, to keep
-                        // their internal state up to date
-                        val detections = detector.detect(audio)
+                        // their internal state up to date.
+                        // Detection for this frame has already been computed above.
                         for (detection in detections) {
                             val lastScore = lastScores[detection.wakeWordId] ?: 0f
                             if (detection.detected && detection.score > 0.1f || lastScore > 0.1f) {

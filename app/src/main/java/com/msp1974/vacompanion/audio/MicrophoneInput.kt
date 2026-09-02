@@ -174,7 +174,7 @@ class MicrophoneInput (
                 config.experimentalAudioBackend,
                 useWebRtcApmBackend(),
                 agc != null,
-                aec != null,
+                aecSource == AudioEnhancerSource.HARDWARE,
                 ns != null
             )
             audioRecord?.startRecording()

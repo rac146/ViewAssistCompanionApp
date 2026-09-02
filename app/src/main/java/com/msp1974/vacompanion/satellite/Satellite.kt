@@ -373,14 +373,6 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         wakeWordHandler?.clearSpeakerEnrollment()
     }
 
-    fun startSpeakerEnrollment() {
-        wakeWordHandler?.startSpeakerEnrollment()
-    }
-
-    fun clearSpeakerEnrollment() {
-        wakeWordHandler?.clearSpeakerEnrollment()
-    }
-
     suspend fun handleWakeWordDetection(detection: WakeWordEngineProvider.WakeWordDetection) {
         if (clientId.isEmpty()) {
             Timber.e("Unable to run audio pipeline. Satellite not connected to HA")

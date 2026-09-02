@@ -183,8 +183,6 @@ class OpenWakeWordEngine(
                     val frameTimestamp = System.currentTimeMillis()
 
                     if (audio.isNotEmpty()) {
-                        val detections = processAudio(audio, frameTimestamp)
-
                         if (config.diagnosticsEnabled) {
                             val normalisedAudio = audioDSP.normaliseAudioBuffer(audio)
                             emit(AudioResult.AudioLevel(AudioDSP().audioLevel(normalisedAudio)))
