@@ -125,7 +125,7 @@ open class MicroWakeWordEngine (
                         // Detection for this frame has already been computed above.
                         for (detection in detections) {
                             val lastScore = lastScores[detection.wakeWordId] ?: 0f
-                            if (detection.detected && detection.score > 0.1f || lastScore > 0.1f) {
+                            if (detection.detected && (detection.score > 0.1f || lastScore > 0.1f)) {
                                 if (detection.wakeWordId in wakeWords) {
                                     emit(AudioResult.WakeDetected(detection.copy(timestamp = frameTimestamp)))
                                 } else if (detection.wakeWordId in stopWords) {
