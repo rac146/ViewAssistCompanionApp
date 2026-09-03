@@ -125,7 +125,7 @@ dependencies {
     implementation (libs.androidx.preference.ktx)
     implementation (libs.timber)
     implementation (libs.onnxruntime.android)
-    implementation(files("libs/sherpa-onnx-1.13.4.aar"))
+    implementation(files("libs/sherpa-onnx-static-link-onnxruntime-1.13.7.aar"))
     implementation (libs.semver)
     implementation (libs.androidx.webkit)
     implementation(libs.kotlinx.serialization.json)
