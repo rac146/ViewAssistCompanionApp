@@ -109,17 +109,16 @@ open class MicroWakeWordEngine (
                             emit(AudioResult.AudioLevel(AudioDSP().audioLevel(audioByteString.toByteArray())))
                         }
 
-                        // Emit audio result even if not streaming so that the controller can maintain a rolling history buffer
-                        if (isStreaming || config.recordingWakewordEnabled) {
-                            emit(
-                                AudioResult.Audio(
-                                    ByteString.copyFrom(audio),
-                                    timestamp = frameTimestamp,
-                                    scores = frameScores
-                                )
+                        // Always emit audio frames so shared speaker verification/enrollment has
+                        // a live buffer source, even when not streaming to HA.
+                        emit(
+                            AudioResult.Audio(
+                                ByteString.copyFrom(audio),
+                                timestamp = frameTimestamp,
+                                scores = frameScores
                             )
-                            audio.rewind()
-                        }
+                        )
+                        audio.rewind()
 
                         // Always run audio through the models, even if not currently streaming, to keep
                         // their internal state up to date.

@@ -188,16 +188,16 @@ class OpenWakeWordEngine(
                             emit(AudioResult.AudioLevel(AudioDSP().audioLevel(normalisedAudio)))
                         }
 
-                        if (isStreaming || config.recordingWakewordEnabled) {
-                            val audioBytes = AudioDSP().shortArrayToByteBuffer(audio)
-                            emit(
-                                AudioResult.Audio(
-                                    ByteString.copyFrom(audioBytes),
-                                    timestamp = frameTimestamp,
-                                    scores = latestFrameScores
-                                )
+                        // Always emit audio frames so shared speaker verification/enrollment has
+                        // a live buffer source, even when not streaming to HA.
+                        val audioBytes = AudioDSP().shortArrayToByteBuffer(audio)
+                        emit(
+                            AudioResult.Audio(
+                                ByteString.copyFrom(audioBytes),
+                                timestamp = frameTimestamp,
+                                scores = latestFrameScores
                             )
-                        }
+                        )
 
                         val detections = processAudio(audioDSP.shortArrayTo16BitPCMFloat(audio), frameTimestamp)
                         for (detection in detections) {
