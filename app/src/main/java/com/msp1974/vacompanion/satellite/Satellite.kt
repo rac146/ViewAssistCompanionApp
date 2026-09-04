@@ -415,6 +415,11 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     suspend fun playWakeWordDetectionSound() {
         if (config.wakeWordSound != "none") {
             try {
+                // Guard against rare cases where wake-sound completion callbacks stall:
+                // allow mic uplink immediately, with initial ducking until this deadline.
+                val fallbackSilenceReleaseAt = System.currentTimeMillis() + 1200L
+                audioPipeline?.silenceAudioBefore = fallbackSilenceReleaseAt
+
                 val soundUri = currentWakeWordSoundUri ?: resolveWakeSoundUri(config.wakeWordSound)
                 
                 if (soundUri != null) {
@@ -423,7 +428,8 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
                 Timber.i("Started wake word sound")
                 scope.launch {
-                    while(mediaManager.soundPlayer.state.value != Player.STATE_ENDED) {
+                    val waitUntil = System.currentTimeMillis() + 2000L
+                    while(mediaManager.soundPlayer.state.value != Player.STATE_ENDED && System.currentTimeMillis() < waitUntil) {
                         delay(50.milliseconds)
                     }
                     audioPipeline?.silenceAudioBefore = System.currentTimeMillis()
